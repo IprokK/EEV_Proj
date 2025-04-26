@@ -1,0 +1,49 @@
+name: CI
+
+# Запускаем на каждый пуш и каждый PR в develop и main
+on:
+  push:
+    branches: [ develop, main ]
+  pull_request:
+    branches: [ develop, main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Lint
+      - name: Lint code
+        run: npm run lint
+        # npm run lint → "eslint src --max-warnings=0"
+
+      # 5. Run tests
+      - name: Run tests
+        run: npm test -- --coverage --watchAll=false
+        # Jest в режиме CI, собирает coverage
+
+      # 6. Build production bundle
+      - name: Build app
+        run: npm run build
+
+      # 7. (Опционально) Сохранить артефакты сборки
+      - name: Upload build artifacts
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-failure-logs
+          path: build/
