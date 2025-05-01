@@ -1,12 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+iimport React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
-
+//Это этот файл, я нашел УРААААААААААААА
 function Game({ avatarUrl, gender }) {
   const mountRef = useRef(null);
-
+    const socket = io('http://localhost:4000');
+    const myNameRef = useRef(''); // Переменная, отслеживающая Ник
   useEffect(() => {
     console.log('–– useEffect начало');    
     let scene, camera, renderer;
@@ -16,7 +17,7 @@ function Game({ avatarUrl, gender }) {
     let obstacles = [];
     let destination = null;
     //const moveSpeed = 0.15;
-    const moveSpeed = 5;
+    const moveSpeed = 50;
     const clock = new THREE.Clock();
     const keys = {};
 
@@ -30,9 +31,7 @@ function Game({ avatarUrl, gender }) {
     let pathIndex = 0;
     let groundPlane;
     let destinationMarker;
-
     // Инициализируем Socket.IO (адрес сервера – тот же домен)
-    const socket = io('http://localhost:4000');
     
     console.log('socket инстанс:', socket);
     //socket.connect();
@@ -128,6 +127,55 @@ function Game({ avatarUrl, gender }) {
         addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName);
       });
     });
+
+      //
+    //    ХУЙНЯ НОМЕР 2
+    //   Этот код я добавил
+    //
+      socket.on('chatMessage', ({ playerId, name, message, position }) => {
+          if (!player || !camera || !scene || !obstacles) return;
+
+          // 1. Точка, откуда исходит луч (глаза игрока или камера)
+          const origin = camera.position.clone();
+
+          // 2. Точка, в которую направляем (позиция отправителя)
+          const targetPos = new THREE.Vector3(position.x, player.position.y, position.z);
+
+          // 3. Направление луча
+          const direction = new THREE.Vector3().subVectors(targetPos, origin).normalize();
+
+          // 4. Создаём луч
+          const raycaster = new THREE.Raycaster(origin, direction);
+
+          // 5. Массив мешей, которые могут загораживать обзор
+          const obstacleMeshes = obstacles.map(o => o.mesh); // если obstacles — массив объектов
+
+          // 6. Проверка на пересечение
+          const intersects = raycaster.intersectObjects(obstacleMeshes, true);
+          const distanceToTarget = origin.distanceTo(targetPos);
+
+          if (intersects.length > 0 && intersects[0].distance < distanceToTarget) {
+              console.log(`🔕 ${name} за препятствием — сообщение скрыто`);
+              return;
+          }
+
+          // 7. Если нет препятствий — выводим сообщение
+          const div = document.getElementById('chatMessages');
+          if (!div) return;
+
+          const p = document.createElement('p');
+          p.textContent = `${name || 'Игрок'}: ${message}`;
+          p.style.color = 'white';
+          p.style.padding = '5px';
+          p.style.margin = '2px 0';
+          p.style.fontSize = '14px';
+          p.style.borderRadius = '10px';
+          div.appendChild(p);
+          div.scrollTop = div.scrollHeight;
+      });
+
+
+
 
     // Socket.IO события
     socket.on('playerMoved', (data) => {
@@ -305,6 +353,9 @@ function Game({ avatarUrl, gender }) {
         // 1) Подтягиваем из sessionStorage профиль пользователя
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+
+          // Добавляем переменную Ник
+          myNameRef.current = myName;
 
         // 2) Создаём и прикрепляем надпись над головой
         const nameLabel = createPlayerLabel(myName);
@@ -780,8 +831,58 @@ function Game({ avatarUrl, gender }) {
       mountRef.current.removeChild(renderer.domElement);
     };
   }, []);
+    //Эта ХУЙНЯ РУК ЖПТ
+    return (
+        <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+            <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
 
-  return <div ref={mountRef} style={{ width: '100vw', height: '100vh' }} />;
+            {/* UI поверх сцены */}
+            <div style={{
+                position: 'absolute',
+                bottom: '20px',
+                left: '20px',
+                width: '25%',
+                background: 'rgba(0,0,0,0.5)',
+                color: 'white',
+                padding: '10px',
+                borderRadius: '15px',
+                fontSize: '14px',
+                zIndex: 10
+            }}>
+                <div id="chatMessages" style={{
+                    height: '150px',
+                    overflowY: 'auto',
+                    background: 'rgba(255, 255, 255, 0.1)',
+                    padding: '5px',
+                    borderRadius: '10px',
+                    color: 'white'
+                }}>
+                    {/* Сюда вставляй сообщения */}
+                </div>
+                <input
+                    id="chatInput"
+                    type="text"
+                    placeholder="Введите сообщение..."
+                    style={{ width: '70%', padding: '5px',position: 'relative',  left: '15px'  }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            const msg = e.target.value.trim();
+                            if (msg) {
+                                socket.emit('chatMessage', {
+                                    message: msg,
+                                    name: myNameRef.current
+                                });
+                                console.log('отправил', msg);
+                                e.target.value = '';
+                            }
+                        }
+                    }}
+                />
+            </div>
+        </div>
+    );
+
 }
 
 export default Game;
+
