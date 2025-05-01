@@ -83,6 +83,28 @@ app.use(express.static(path.join(__dirname, 'build')));
         });
       }
     });
+      // 💬 Чат: приём и рассылка сообщений только по расстоянию
+      socket.on('chatMessage', ({ message, name }) => {
+          const sender = players[socket.id];
+          if (!sender) return;
+
+          for (const [id, other] of Object.entries(players)) {
+              const dx = sender.x - other.x;
+              const dz = sender.z - other.z;
+              const dist = Math.sqrt(dx * dx + dz * dz);
+
+              // Рассылаем только игрокам в радиусе 50
+              if (dist <= 50 || id === socket.id) {
+                  io.to(id).emit('chatMessage', {
+                      playerId: socket.id,
+                      position: { x: sender.x, z: sender.z },
+                      name: name || '???',
+                      message: message
+                  });
+              }
+          }
+      });
+
 
     // Отключение
     socket.on('disconnect', () => {
