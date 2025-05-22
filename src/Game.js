@@ -1163,7 +1163,8 @@ function Game({ avatarUrl, gender }) {
             </div>
           )}
         </div>
-      )}
+          )}
+          {/**/ }
           <DoubleTapWrapper
               onDoubleTap={() => setIsChatVisible(false)}
               onTap={() => { if (!isChatVisible) setIsChatVisible(true); }}

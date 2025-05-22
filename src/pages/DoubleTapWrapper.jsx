@@ -1,5 +1,5 @@
 ﻿import React, { useRef } from 'react';
-
+/* */
 export default function DoubleTapWrapper({ onDoubleTap, onTap, children, threshold = 300 }) {
     const lastTap = useRef(0);
 
