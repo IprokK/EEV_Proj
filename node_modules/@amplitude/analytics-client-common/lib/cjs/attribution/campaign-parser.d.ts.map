@@ -1,0 +1,1 @@
+{"version":3,"file":"campaign-parser.d.ts","sourceRoot":"","sources":["../../../src/attribution/campaign-parser.ts"],"names":[],"mappings":"AAqBA,OAAO,EACL,QAAQ,EACR,cAAc,IAAI,eAAe,EACjC,iBAAiB,EACjB,kBAAkB,EAClB,aAAa,EACd,MAAM,4BAA4B,CAAC;AAEpC,qBAAa,cAAe,YAAW,eAAe;IAC9C,KAAK,IAAI,OAAO,CAAC,QAAQ,CAAC;IAShC,WAAW,IAAI,aAAa;IAoB5B,WAAW,IAAI,kBAAkB;IAcjC,WAAW,IAAI,iBAAiB;CAgBjC"}

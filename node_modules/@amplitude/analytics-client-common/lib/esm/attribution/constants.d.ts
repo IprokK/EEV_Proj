@@ -1,0 +1,22 @@
+import { Campaign } from '@amplitude/analytics-types';
+export declare const UTM_CAMPAIGN = "utm_campaign";
+export declare const UTM_CONTENT = "utm_content";
+export declare const UTM_ID = "utm_id";
+export declare const UTM_MEDIUM = "utm_medium";
+export declare const UTM_SOURCE = "utm_source";
+export declare const UTM_TERM = "utm_term";
+export declare const DCLID = "dclid";
+export declare const FBCLID = "fbclid";
+export declare const GBRAID = "gbraid";
+export declare const GCLID = "gclid";
+export declare const KO_CLICK_ID = "ko_click_id";
+export declare const LI_FAT_ID = "li_fat_id";
+export declare const MSCLKID = "msclkid";
+export declare const RDT_CID = "rtd_cid";
+export declare const TTCLID = "ttclid";
+export declare const TWCLID = "twclid";
+export declare const WBRAID = "wbraid";
+export declare const EMPTY_VALUE = "EMPTY";
+export declare const BASE_CAMPAIGN: Campaign;
+export declare const MKTG = "MKTG";
+//# sourceMappingURL=constants.d.ts.map
