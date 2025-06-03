@@ -1,0 +1,330 @@
+var ApplicationContextProviderImpl = /** @class */ (function () {
+    function ApplicationContextProviderImpl() {
+    }
+    ApplicationContextProviderImpl.prototype.getApplicationContext = function () {
+        return {
+            versionName: this.versionName,
+            language: getLanguage(),
+            platform: 'Web',
+            os: undefined,
+            deviceModel: undefined,
+        };
+    };
+    return ApplicationContextProviderImpl;
+}());
+var getLanguage = function () {
+    return ((typeof navigator !== 'undefined' &&
+        ((navigator.languages && navigator.languages[0]) ||
+            navigator.language)) ||
+        '');
+};
+
+var EventBridgeImpl = /** @class */ (function () {
+    function EventBridgeImpl() {
+        this.queue = [];
+    }
+    EventBridgeImpl.prototype.logEvent = function (event) {
+        if (!this.receiver) {
+            if (this.queue.length < 512) {
+                this.queue.push(event);
+            }
+        }
+        else {
+            this.receiver(event);
+        }
+    };
+    EventBridgeImpl.prototype.setEventReceiver = function (receiver) {
+        this.receiver = receiver;
+        if (this.queue.length > 0) {
+            this.queue.forEach(function (event) {
+                receiver(event);
+            });
+            this.queue = [];
+        }
+    };
+    return EventBridgeImpl;
+}());
+
+/******************************************************************************
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+***************************************************************************** */
+var __assign = function () {
+  __assign = Object.assign || function __assign(t) {
+    for (var s, i = 1, n = arguments.length; i < n; i++) {
+      s = arguments[i];
+      for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+    }
+    return t;
+  };
+  return __assign.apply(this, arguments);
+};
+function __values(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator,
+    m = s && o[s],
+    i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function () {
+      if (o && i >= o.length) o = void 0;
+      return {
+        value: o && o[i++],
+        done: !o
+      };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+function __read(o, n) {
+  var m = typeof Symbol === "function" && o[Symbol.iterator];
+  if (!m) return o;
+  var i = m.call(o),
+    r,
+    ar = [],
+    e;
+  try {
+    while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+  } catch (error) {
+    e = {
+      error: error
+    };
+  } finally {
+    try {
+      if (r && !r.done && (m = i["return"])) m.call(i);
+    } finally {
+      if (e) throw e.error;
+    }
+  }
+  return ar;
+}
+typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+  var e = new Error(message);
+  return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+var isEqual = function (obj1, obj2) {
+    var e_1, _a;
+    var primitive = ['string', 'number', 'boolean', 'undefined'];
+    var typeA = typeof obj1;
+    var typeB = typeof obj2;
+    if (typeA !== typeB) {
+        return false;
+    }
+    try {
+        for (var primitive_1 = __values(primitive), primitive_1_1 = primitive_1.next(); !primitive_1_1.done; primitive_1_1 = primitive_1.next()) {
+            var p = primitive_1_1.value;
+            if (p === typeA) {
+                return obj1 === obj2;
+            }
+        }
+    }
+    catch (e_1_1) { e_1 = { error: e_1_1 }; }
+    finally {
+        try {
+            if (primitive_1_1 && !primitive_1_1.done && (_a = primitive_1.return)) _a.call(primitive_1);
+        }
+        finally { if (e_1) throw e_1.error; }
+    }
+    // check null
+    if (obj1 == null && obj2 == null) {
+        return true;
+    }
+    else if (obj1 == null || obj2 == null) {
+        return false;
+    }
+    // if got here - objects
+    if (obj1.length !== obj2.length) {
+        return false;
+    }
+    //check if arrays
+    var isArrayA = Array.isArray(obj1);
+    var isArrayB = Array.isArray(obj2);
+    if (isArrayA !== isArrayB) {
+        return false;
+    }
+    if (isArrayA && isArrayB) {
+        //arrays
+        for (var i = 0; i < obj1.length; i++) {
+            if (!isEqual(obj1[i], obj2[i])) {
+                return false;
+            }
+        }
+    }
+    else {
+        //objects
+        var sorted1 = Object.keys(obj1).sort();
+        var sorted2 = Object.keys(obj2).sort();
+        if (!isEqual(sorted1, sorted2)) {
+            return false;
+        }
+        //compare object values
+        var result_1 = true;
+        Object.keys(obj1).forEach(function (key) {
+            if (!isEqual(obj1[key], obj2[key])) {
+                result_1 = false;
+            }
+        });
+        return result_1;
+    }
+    return true;
+};
+
+var ID_OP_SET = '$set';
+var ID_OP_UNSET = '$unset';
+var ID_OP_CLEAR_ALL = '$clearAll';
+// Polyfill for Object.entries
+if (!Object.entries) {
+    Object.entries = function (obj) {
+        var ownProps = Object.keys(obj);
+        var i = ownProps.length;
+        var resArray = new Array(i);
+        while (i--) {
+            resArray[i] = [ownProps[i], obj[ownProps[i]]];
+        }
+        return resArray;
+    };
+}
+var IdentityStoreImpl = /** @class */ (function () {
+    function IdentityStoreImpl() {
+        this.identity = { userProperties: {} };
+        this.listeners = new Set();
+    }
+    IdentityStoreImpl.prototype.editIdentity = function () {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        var self = this;
+        var actingUserProperties = __assign({}, this.identity.userProperties);
+        var actingIdentity = __assign(__assign({}, this.identity), { userProperties: actingUserProperties });
+        return {
+            setUserId: function (userId) {
+                actingIdentity.userId = userId;
+                return this;
+            },
+            setDeviceId: function (deviceId) {
+                actingIdentity.deviceId = deviceId;
+                return this;
+            },
+            setUserProperties: function (userProperties) {
+                actingIdentity.userProperties = userProperties;
+                return this;
+            },
+            setOptOut: function (optOut) {
+                actingIdentity.optOut = optOut;
+                return this;
+            },
+            updateUserProperties: function (actions) {
+                var e_1, _a, e_2, _b, e_3, _c;
+                var actingProperties = actingIdentity.userProperties || {};
+                try {
+                    for (var _d = __values(Object.entries(actions)), _e = _d.next(); !_e.done; _e = _d.next()) {
+                        var _f = __read(_e.value, 2), action = _f[0], properties = _f[1];
+                        switch (action) {
+                            case ID_OP_SET:
+                                try {
+                                    for (var _g = (e_2 = void 0, __values(Object.entries(properties))), _h = _g.next(); !_h.done; _h = _g.next()) {
+                                        var _j = __read(_h.value, 2), key = _j[0], value = _j[1];
+                                        actingProperties[key] = value;
+                                    }
+                                }
+                                catch (e_2_1) { e_2 = { error: e_2_1 }; }
+                                finally {
+                                    try {
+                                        if (_h && !_h.done && (_b = _g.return)) _b.call(_g);
+                                    }
+                                    finally { if (e_2) throw e_2.error; }
+                                }
+                                break;
+                            case ID_OP_UNSET:
+                                try {
+                                    for (var _k = (e_3 = void 0, __values(Object.keys(properties))), _l = _k.next(); !_l.done; _l = _k.next()) {
+                                        var key = _l.value;
+                                        delete actingProperties[key];
+                                    }
+                                }
+                                catch (e_3_1) { e_3 = { error: e_3_1 }; }
+                                finally {
+                                    try {
+                                        if (_l && !_l.done && (_c = _k.return)) _c.call(_k);
+                                    }
+                                    finally { if (e_3) throw e_3.error; }
+                                }
+                                break;
+                            case ID_OP_CLEAR_ALL:
+                                actingProperties = {};
+                                break;
+                        }
+                    }
+                }
+                catch (e_1_1) { e_1 = { error: e_1_1 }; }
+                finally {
+                    try {
+                        if (_e && !_e.done && (_a = _d.return)) _a.call(_d);
+                    }
+                    finally { if (e_1) throw e_1.error; }
+                }
+                actingIdentity.userProperties = actingProperties;
+                return this;
+            },
+            commit: function () {
+                self.setIdentity(actingIdentity);
+                return this;
+            },
+        };
+    };
+    IdentityStoreImpl.prototype.getIdentity = function () {
+        return __assign({}, this.identity);
+    };
+    IdentityStoreImpl.prototype.setIdentity = function (identity) {
+        var originalIdentity = __assign({}, this.identity);
+        this.identity = __assign({}, identity);
+        if (!isEqual(originalIdentity, this.identity)) {
+            this.listeners.forEach(function (listener) {
+                listener(identity);
+            });
+        }
+    };
+    IdentityStoreImpl.prototype.addIdentityListener = function (listener) {
+        this.listeners.add(listener);
+    };
+    IdentityStoreImpl.prototype.removeIdentityListener = function (listener) {
+        this.listeners.delete(listener);
+    };
+    return IdentityStoreImpl;
+}());
+
+var safeGlobal = typeof globalThis !== 'undefined'
+    ? globalThis
+    : typeof global !== 'undefined'
+        ? global
+        : self;
+
+var AnalyticsConnector = /** @class */ (function () {
+    function AnalyticsConnector() {
+        this.identityStore = new IdentityStoreImpl();
+        this.eventBridge = new EventBridgeImpl();
+        this.applicationContextProvider = new ApplicationContextProviderImpl();
+    }
+    AnalyticsConnector.getInstance = function (instanceName) {
+        if (!safeGlobal['analyticsConnectorInstances']) {
+            safeGlobal['analyticsConnectorInstances'] = {};
+        }
+        if (!safeGlobal['analyticsConnectorInstances'][instanceName]) {
+            safeGlobal['analyticsConnectorInstances'][instanceName] =
+                new AnalyticsConnector();
+        }
+        return safeGlobal['analyticsConnectorInstances'][instanceName];
+    };
+    return AnalyticsConnector;
+}());
+
+export { AnalyticsConnector };

@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
-
+import DoubleTapWrapper from './pages/DoubleTapWrapper';
+import '@fontsource/roboto';
 function Game({ avatarUrl, gender }) {
+    const [activeApp, setActiveApp] = useState(null);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
   const [selectedHouse, setSelectedHouse] = useState(null);
@@ -16,6 +18,173 @@ function Game({ avatarUrl, gender }) {
   const voiceConnections = useRef({});
   const localStream = useRef(null);
   const voiceIcons = useRef({});
+
+    const [contacts, setContacts] = useState([]);
+    const [activeChat, setActiveChat] = useState(null);
+    const [chatMessages, setChatMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
+
+    // Загрузка контактов
+    const loadContacts = async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/users/search?term=', {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+            setContacts(await res.json());
+        }
+    };
+
+    // Загрузка сообщений
+    const loadMessages = async (contactId) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/messages?userId=${contactId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+            setChatMessages(await res.json());
+        }
+    };
+
+    // Отправка сообщения
+    const sendMessage = async () => {
+        if (!newMessage.trim() || !activeChat) return;
+
+        const token = localStorage.getItem('token');
+        await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                receiver_id: activeChat.id,
+                message: newMessage
+            })
+        });
+
+        setNewMessage('');
+    };
+
+    // Поиск пользователей
+    const searchUsers = async () => {
+        if (!searchTerm.trim()) return;
+
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/users/search?term=${encodeURIComponent(searchTerm)}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            setSearchResults(await res.json());
+        }
+    };
+
+    // Обработка входящих сообщений через сокет
+    useEffect(() => {
+        if (!socketRef.current) return;
+
+        const handleNewMessage = (message) => {
+            if (activeChat && message.sender_id === activeChat.id) {
+                setChatMessages(prev => [...prev, message]);
+            }
+        };
+
+        socketRef.current.on('newMessage', handleNewMessage);
+        return () => {
+            socketRef.current.off('newMessage', handleNewMessage);
+        };
+    }, [activeChat]);
+
+    // Загрузка текущего пользователя
+    useEffect(() => {
+        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        setCurrentUser(profile);
+    }, []);
+
+    // Загрузка контактов при открытии приложения
+    useEffect(() => {
+        if (activeApp === "Telegram") {
+            loadContacts();
+        }
+    }, [activeApp]);
+
+    // Хуйня для телефона
+
+    const handleClickChat = (name) => {
+        alert(`Вы выбрали чат с ${name}`);
+    };
+
+    const handleSendMessage = () => {
+        alert("Сообщение отправлено!");
+    };
+
+    const [isIframeOpen, setIsIframeOpen] = useState(false);
+    const [iframeUrl, setIframeUrl] = useState('');
+
+    const [appsHidden, setAppsHidden] = useState(false);
+    const [isPhoneVisible, setIsPhoneVisible] = useState(true);
+    const [isChatVisible, setIsChatVisible] = useState(true);
+    const handleAppClick = (appName) => {
+        setAppsHidden(true);
+        setActiveApp(appName);
+    };
+
+    const closeApp = () => {
+        setAppsHidden(false);
+        setActiveApp(null);
+    };
+
+    const bodyStyle = {
+        margin: 0,
+        fontFamily: "'Arial', sans-serif",
+        background: '#f1f1f1',
+        color: '#333',
+        minHeight: '100vh'
+    };
+
+    const headerStyle = {
+        backgroundColor: '#0047ab',
+        color: 'white',
+        padding: '1em',
+        textAlign: 'center'
+    };
+
+    const mainStyle = {
+        padding: '1em'
+    };
+
+    const listingStyle = {
+        background: 'white',
+        borderRadius: '10px',
+        padding: '1em',
+        marginBottom: '1em',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+    };
+
+    const imageStyle = {
+        width: '100%',
+        borderRadius: '10px'
+    };
+
+    const listingTitleStyle = {
+        marginTop: '0.5em',
+        marginBottom: '0.3em'
+    };
+
+    const openIframe = (url) => {
+        setIframeUrl(url);
+        setIsIframeOpen(true);
+    };
+
+    const closeIframe = () => {
+        setIsIframeOpen(false);
+        setIframeUrl('');
+    };
+    // Конец хуйни
 
   async function viewStats() {
     if (!selectedPlayer) return;
@@ -97,7 +266,7 @@ function Game({ avatarUrl, gender }) {
     let destinationMarker;
 
     const token = localStorage.getItem('token');
-    socketRef.current = io(`37.27.238.225:4000`, {
+    socketRef.current = io(`localhost:4000`, {
       auth: { token }
     });
     const socket = socketRef.current;
@@ -1097,61 +1266,511 @@ function Game({ avatarUrl, gender }) {
             </div>
           )}
         </div>
-      )}
-
-      <div style={{
-        position: 'absolute',
-        bottom: '20px',
-        left: '20px',
-        width: '25%',
-        background: 'rgba(0,0,0,0.5)',
-        color: 'white',
-        padding: '10px',
-        borderRadius: '15px',
-        fontSize: '14px',
-        zIndex: 10
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-          <span>Голосовой чат: {micEnabled ? 'Вкл' : 'Выкл'}</span>
-          <button
-            onClick={toggleMicrophone}
-            style={{
-              ...btnStyle,
-              background: micEnabled ? '#dc3545' : '#28a745'
-            }}
+          )}
+          {/**/ }
+          <DoubleTapWrapper
+              onDoubleTap={() => setIsChatVisible(false)}
+              onTap={() => { if (!isChatVisible) setIsChatVisible(true); }}
           >
-            {micEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
-          </button>
-        </div>
-        <div id="chatMessages" style={{
-          height: '150px',
-          overflowY: 'auto',
-          background: 'rgba(255, 255, 255, 0.1)',
-          padding: '5px',
-          borderRadius: '10px',
-          color: 'white'
-        }}>
-        </div>
-        <input
-          id="chatInput"
-          type="text"
-          placeholder="Введите сообщение..."
-          style={{ width: '70%', padding: '5px', position: 'relative', left: '15px' }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const msg = e.target.value.trim();
-              if (msg) {
-                socketRef.current?.emit('chatMessage', {
-                  message: msg,
-                  name: mountRef.current
-                });
-                console.log('отправил', msg);
-                e.target.value = '';
-              }
-            }
-          }}
-        />
-      </div>
+              <div
+                  style={{
+                      position: 'absolute',
+                      top: '20px',
+                      left: '20px',
+                      width: '25%',
+                      height: '10%',
+                      padding: '10px',
+                      borderRadius: '15px',
+                      fontSize: '14px',
+                      fontFamily: 'Roboto, sans-serif',
+                      zIndex: 10,
+                      opacity: isChatVisible ? 1 : 0,
+                      transition: 'opacity 0.3s ease',
+                      // Разрешаем клики даже когда невидим
+                      pointerEvents: 'auto',
+                      // Прозрачная область для кликов когда скрыт
+                      cursor: isChatVisible ? 'default' : 'pointer'
+                  }}
+                  onDoubleClick={() => setIsChatVisible(false)}
+                  onClick={() => {
+                      if (!isChatVisible) {
+                          setIsChatVisible(true);
+                      }
+                  }
+                  }
+              >
+                  <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '10px'
+                  }}>
+                      <span>Голосовой чат: {micEnabled ? 'Вкл' : 'Выкл'}</span>
+                      <button
+                          onClick={toggleMicrophone}
+                          style={{
+                              ...btnStyle,
+                              background: micEnabled ? '#dc3545' : '#28a745'
+                          }}
+                      >
+                          {micEnabled ? 'Выключить микрофон' : 'Включить микрофон'}
+                      </button>
+                  </div>
+                  <div id="chatMessages" style={{
+                      height: '150px',
+                      overflowY: 'auto',
+                      padding: '5px',
+                      borderRadius: '10px',
+                      color: 'white',
+                      fontFamily: 'Roboto, sans-serif'
+                  }}>
+                  </div>
+              </div>
+          </DoubleTapWrapper>
+
+          <DoubleTapWrapper>
+              <input
+                  id="chatInput"
+                  type="text"
+                  placeholder="Введите сообщение..."
+                  style={{
+                      position: 'absolute',
+                      bottom: '20px',
+                      left: '20px',
+                      width: '25%',
+                      height: '2,5%',
+                      padding: '10px',
+                      borderRadius: '15px',
+                      fontSize: '14px',
+                      fontFamily: 'Roboto, sans-serif',
+                      zIndex: 10,
+                      opacity: isChatVisible ? 1 : 0,
+                      transition: 'opacity 0.3s ease',
+                      // Разрешаем клики даже когда невидим
+                      pointerEvents: 'auto',
+                      // Прозрачная область для кликов когда скрыт
+                      cursor: isChatVisible ? 'default' : 'pointer'
+                  }}
+                  onDoubleClick={() => setIsChatVisible(false)}
+                  onClick={() => {
+                      if (!isChatVisible) {
+                          setIsChatVisibchle(true);
+                      }
+                  }
+                  }
+                  onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                          const msg = e.target.value.trim();
+                          if (msg) {
+                              socketRef.current?.emit('chatMessage', {
+                                  message: msg,
+                                  name: mountRef.current
+                              });
+                              console.log('отправил', msg);
+                              e.target.value = '';
+                          }
+                      }
+                  }}
+              />
+          </DoubleTapWrapper>
+          {/*Телефон*/}
+          <DoubleTapWrapper
+              onDoubleTap={() => setIsPhoneVisible(false)}
+              onTap={() => { if (!isPhoneVisible) setIsPhoneVisible(true); }}
+          >
+              <div
+                  style={{
+                      position: "absolute",
+                      bottom: "20px",
+                      right: "20px",
+                      background: "linear-gradient(#e66465, #9198e5)",
+                      width: "200px",
+                      aspectRatio: "10 / 19.5",
+                      borderRadius: "1.5em",
+                      border: "0.5em solid black",
+                      overflow: "hidden",
+                      zIndex: 100,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      opacity: isPhoneVisible ? 1 : 0,
+                      transition: 'opacity 0.3s ease',
+                      // Разрешаем клики даже когда невидим
+                      pointerEvents: 'auto',
+                      // Прозрачная область для кликов когда скрыт
+                      cursor: isPhoneVisible ? 'default' : 'pointer'
+                  }}
+                  onDoubleClick={() => setIsPhoneVisible(false)}
+                  onClick={() => {
+                      if (!isPhoneVisible) {
+                          setIsPhoneVisible(true);
+                      }
+                  }
+                  }
+              >
+                  {/* Содержимое телефона */}
+                  <div style={{ flex: 1, position: "relative", pointerEvents: isPhoneVisible ? 'auto' : 'none' }}>
+                      {!appsHidden ? (
+                          // Иконки приложений
+                          <div className="app-grid" style={{
+                              display: "grid",
+                              gridTemplateColumns: "repeat(3, 1fr)",
+                              gap: "0.5em",
+                              padding: "0.5em"
+                          }}>
+                              {[
+                                  { src: "https://cdn-icons-png.flaticon.com/512/174/174855.png", alt: "YouTube", app: "YouTube" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail", app: "Gmail" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера", app: "Camera" },
+                                  { src: "https://cdn.iconscout.com/icon/free/png-512/free-telegram-logo-icon-download-in-svg-png-gif-file-formats--social-media-brand-pack-logos-icons-3073750.png?f=webp&w=512", alt: "Telegram", app: "Telegram" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/2111/2111398.png", alt: "Instagram" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732228.png", alt: "Google Drive" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png", alt: "Phone" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Camera" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png", alt: "Gallery" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828970.png", alt: "Music" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828961.png", alt: "Notes" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828843.png", alt: "Clock" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828998.png", alt: "Files" }
+                              ].map((app, index) => (
+                                  <button
+                                      key={index}
+                                      style={{
+                                          width: "100%",
+                                          aspectRatio: "1 / 1",
+                                          borderRadius: "0.5em",
+                                          border: "none",
+                                          backgroundImage: `url(${app.src})`,
+                                          backgroundSize: "contain",
+                                          backgroundPosition: "center",
+                                          backgroundRepeat: "no-repeat",
+                                          cursor: "pointer"
+                                      }}
+                                      aria-label={app.alt}
+                                      onClick={() => handleAppClick(app.app)}
+                                  />
+                              ))}
+                          </div>
+                      ) : (
+                          // Псевдо-сайт
+                          <div style={{
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              padding: "1em",
+                              width: "100%",
+                              height: "94%",
+                              background: "#fff",
+                              color: "#000",
+                              overflowY: "auto",
+                              fontSize: "10px",
+                              lineHeight: "1.4"
+                          }}>
+                              <div style={{ marginBottom: "1em", fontWeight: "bold" }}>{activeApp}</div>
+                              {activeApp === "YouTube" && (
+                                  <div style={bodyStyle}>
+                                      <header style={headerStyle}>
+                                          <h1>Недвижимость в Санкт-Петербурге</h1>
+                                          <p>Лучшие предложения прямо сейчас</p>
+                                      </header>
+                                      <main style={mainStyle}>
+                                          <div style={listingStyle}>
+                                              <img
+                                                  src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
+                                                  alt="Квартира у метро"
+                                                  style={imageStyle}
+                                              />
+                                              <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
+                                              <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
+                                          </div>
+                                          <div style={listingStyle}>
+                                              <img
+                                                  src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
+                                                  alt="ЖК Комфорт"
+                                                  style={imageStyle}
+                                              />
+                                              <h3 style={listingTitleStyle}>ЖК «Комфорт», Красногвардейский район</h3>
+                                              <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
+                                          </div>
+                                      </main>
+                                  </div>
+                              )}
+                              {activeApp === "Gmail" && (
+                                  <div>
+                                      <p>📧 Входящие:</p>
+                                      <ul>
+                                          <li><b>От:</b> Папа — "Где ты гуляешь?"</li>
+                                          <li><b>От:</b> Курьер — "Ваш заказ доставлен"</li>
+                                          <li><b>От:</b> Izя — "Ты идешь сегодня?" ❤️</li>
+                                      </ul>
+                                  </div>
+                              )}
+                              {activeApp === "Camera" && (
+                                  <div style={bodyStyle}>
+                                      <header style={headerStyle}>
+                                          <h1>Недвижимость в Санкт-Петербурге</h1>
+                                          <p>Лучшие предложения прямо сейчас</p>
+                                      </header>
+                                      <main style={mainStyle}>
+                                          <div style={listingStyle}>
+                                              <img
+                                                  src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
+                                                  alt="Квартира у метро"
+                                                  style={imageStyle}
+                                              />
+                                              <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
+                                              <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
+                                          </div>
+                                          <div style={listingStyle}>
+                                              <img
+                                                  src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
+                                                  alt="ЖК Комфорт"
+                                                  style={imageStyle}
+                                              />
+                                              <h3 style={listingTitleStyle}>ЖК «Комфорт», Красногвардейский район</h3>
+                                              <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
+                                          </div>
+                                      </main>
+                                  </div>
+                                  )}
+                                  {/*Хуячим Телеграм*/ }
+                                  {activeApp === "Telegram" && (
+                                      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                                          <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                              <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
+                                          </div>
+
+                                          <div style={{ width: "100%", height: "90%", display: "flex" }}>
+                                              {/* Боковая панель контактов */}
+                                              <div style={{ width: "25%", height: "100%", backgroundColor: "#f0f0f0", padding: "2%" }}>
+                                                  {/* Поиск пользователей */}
+                                                  <div style={{ display: "flex", marginBottom: "10px" }}>
+                                                      <input
+                                                          type="text"
+                                                          value={searchTerm}
+                                                          onChange={(e) => setSearchTerm(e.target.value)}
+                                                          placeholder="Поиск..."
+                                                          style={{ flex: 1, padding: "5px", width: '130px' }}
+                                                      />
+                                                      <button onClick={searchUsers} style={{ padding: "5px" }}>🔍</button>
+                                                  </div>
+
+                                                  {/* Результаты поиска */}
+                                                  {searchResults.length > 0 && (
+                                                      <div style={{ marginBottom: "10px" }}>
+                                                          <div style={{ fontWeight: "bold" }}>Результаты поиска:</div>
+                                                          {searchResults.map(user => (
+                                                              <div
+                                                                  key={user.id}
+                                                                  onClick={() => {
+                                                                      setActiveChat(user);
+                                                                      loadMessages(user.id);
+                                                                      setSearchTerm('');
+                                                                      setSearchResults([]);
+                                                                  }}
+                                                                  style={{ padding: "5px", cursor: "pointer", backgroundColor: "#e0e0e0" }}
+                                                              >
+                                                                  {user.first_name} {user.last_name}
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  )}
+
+                                                  {/* Список контактов */}
+                                                  <div style={{ fontSize: "120%", fontWeight: "bold", marginBottom: "10px" }}>Контакты</div>
+                                                  <div style={{ maxHeight: "calc(100% - 100px)", overflowY: "auto" }}>
+                                                      {contacts.map(contact => (
+                                                          <div
+                                                              key={contact.id}
+                                                              onClick={() => {
+                                                                  setActiveChat(contact);
+                                                                  loadMessages(contact.id);
+                                                              }}
+                                                              style={{
+                                                                  padding: "8px",
+                                                                  backgroundColor: activeChat?.id === contact.id ? "#dcdcdc" : "transparent",
+                                                                  marginBottom: "5px",
+                                                                  cursor: "pointer",
+                                                                  borderRadius: "5px"
+                                                              }}
+                                                          >
+                                                              {contact.first_name} {contact.last_name}
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              </div>
+
+                                              {/* Область чата */}
+                                              <div style={{ width: "70%", height: "80%", display: "flex", flexDirection: "column" }}>
+                                                  {activeChat ? (
+                                                      <>
+                                                          {/* Шапка чата */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              top: '100px',
+                                                              height: "5%",
+                                                              width: '40%',
+                                                              backgroundColor: "#e8e8e8",
+                                                              display: "flex",
+                                                              alignItems: "center",
+                                                              padding: "0 2%",
+                                                              borderBottom: "1px solid #ccc"
+                                                          }}>
+                                                              <div style={{ fontSize: "120%" }}>
+                                                                  {activeChat.first_name} {activeChat.last_name}
+                                                              </div>
+                                                          </div>
+
+                                                          {/* История сообщений */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              bottom: '20px',
+                                                              height: "57.5%",
+                                                              width: '70%',
+                                                              overflowY: "auto",
+                                                              padding: "1px",
+                                                              backgroundColor: "#fafafa",
+                                                              display: "flex",
+                                                              flexDirection: "column"
+                                                          }}>
+                                                              {chatMessages.map(msg => (
+                                                                  <div
+                                                                      key={msg.id}
+                                                                      style={{
+                                                                          marginBottom: "10px",
+                                                                          alignSelf: msg.sender_id === currentUser?.id ? "flex-end" : "flex-start",
+                                                                          maxWidth: "80%"
+                                                                      }}
+                                                                  >
+                                                                      <div style={{
+                                                                          backgroundColor: msg.sender_id === currentUser?.id ? "#dcf8c6" : "#ffffff",
+                                                                          padding: "10px",
+                                                                          borderRadius: "10px",
+                                                                          boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                                                      }}>
+                                                                          {msg.message}
+                                                                      </div>
+                                                                      <div style={{
+                                                                          fontSize: "10px",
+                                                                          color: "#777",
+                                                                          marginTop: "4px",
+                                                                          textAlign: msg.sender_id === currentUser?.id ? "right" : "left"
+                                                                      }}>
+                                                                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                      </div>
+                                                                  </div>
+                                                              ))}
+                                                          </div>
+
+                                                          {/* Поле ввода */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              bottom: '5px',
+                                                              height: "10%",
+                                                              display: "flex",
+                                                              padding: "1px",
+                                                              borderTop: "1px solid #ccc",
+                                                              backgroundColor: "#fff"
+                                                          }}>
+                                                              <input
+                                                                  value={newMessage}
+                                                                  onChange={(e) => setNewMessage(e.target.value)}
+                                                                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                                                                  style={{ flex: 1, padding: "10px", borderRadius: "20px", border: "1px solid #ddd" }}
+                                                                  placeholder="Введите сообщение..."
+                                                                  style={{width: '80px'} }
+                                                              />
+                                                              <button
+                                                                  onClick={sendMessage}
+                                                                  style={{
+                                                                      padding: "10px",
+                                                                      marginLeft: "10px",
+                                                                      backgroundColor: "#0088cc",
+                                                                      border: "none",
+                                                                      borderRadius: "20px",
+                                                                      cursor: "pointer",
+                                                                      width: '40px',
+                                                                      height: '40px',
+                                                                      display: 'flex',
+                                                                      alignItems: 'center',
+                                                                      justifyContent: 'center'
+                                                                  }}
+                                                              >
+                                                                  <svg
+                                                                      xmlns="http://www.w3.org/2000/svg"
+                                                                      width="16"
+                                                                      height="16"
+                                                                      viewBox="0 0 24 24"
+                                                                      fill="white"
+                                                                  >
+                                                                      <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
+                                                                  </svg>
+                                                              </button>
+                                                          </div>
+                                                      </>
+                                                  ) : (
+                                                      // Заглушка, если чат не выбран
+                                                      <div style={{
+                                                          display: "flex",
+                                                          justifyContent: "center",
+                                                          alignItems: "center",
+                                                          height: "100%",
+                                                          color: "#777"
+                                                      }}>
+                                                          <div>Выберите контакт для начала общения</div>
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      </div>
+                                  )}
+
+
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Нижняя кнопка */}
+                  <div style={{
+                      backgroundColor: "black",
+                      width: "100%",
+                      height: "10%",
+                      borderTop: "0.5em solid black",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center"
+                  }}>
+                      <div
+                          style={{
+                              backgroundColor: "white",
+                              width: "15%",
+                              aspectRatio: "1 / 1",
+                              borderRadius: "50%",
+                              border: "2px solid black"
+                          }}
+                      >
+                          <button onClick={closeApp} style={{
+                              opacity: 0,
+                              position: "absolute",
+                              bottom: "6px",
+                              left: "50%",
+                              transform: "translateX(-50%)",
+                              padding: "0.5em 1em",
+                              borderRadius: "10em",
+                              background: "#000",
+                              color: "white",
+                              border: "none",
+                              cursor: "pointer"
+                          }}>
+                              ⬅ Назад
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </DoubleTapWrapper>
+          
     </>
   );
 }
