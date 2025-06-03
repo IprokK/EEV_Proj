@@ -13,9 +13,8 @@ const avatars = {
 
 export default function CharacterSelect({ onSelect }) {
   const [gender, setGender] = useState(null);
-
+  
   const handleGenderSelect = (selected) => setGender(selected);
-
   return (
     <div style={styles.wrapper}>
       {!gender ? (

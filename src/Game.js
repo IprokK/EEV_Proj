@@ -4,7 +4,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
+import '@fontsource/roboto';
 function Game({ avatarUrl, gender }) {
+    const [activeApp, setActiveApp] = useState(null);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
   const [selectedHouse, setSelectedHouse] = useState(null);
@@ -17,12 +19,113 @@ function Game({ avatarUrl, gender }) {
   const localStream = useRef(null);
   const voiceIcons = useRef({});
 
+    const [contacts, setContacts] = useState([]);
+    const [activeChat, setActiveChat] = useState(null);
+    const [chatMessages, setChatMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
+
+    // Загрузка контактов
+    const loadContacts = async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/users/search?term=', {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+            setContacts(await res.json());
+        }
+    };
+
+    // Загрузка сообщений
+    const loadMessages = async (contactId) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/messages?userId=${contactId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+            setChatMessages(await res.json());
+        }
+    };
+
+    // Отправка сообщения
+    const sendMessage = async () => {
+        if (!newMessage.trim() || !activeChat) return;
+
+        const token = localStorage.getItem('token');
+        await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                receiver_id: activeChat.id,
+                message: newMessage
+            })
+        });
+
+        setNewMessage('');
+    };
+
+    // Поиск пользователей
+    const searchUsers = async () => {
+        if (!searchTerm.trim()) return;
+
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/users/search?term=${encodeURIComponent(searchTerm)}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            setSearchResults(await res.json());
+        }
+    };
+
+    // Обработка входящих сообщений через сокет
+    useEffect(() => {
+        if (!socketRef.current) return;
+
+        const handleNewMessage = (message) => {
+            if (activeChat && message.sender_id === activeChat.id) {
+                setChatMessages(prev => [...prev, message]);
+            }
+        };
+
+        socketRef.current.on('newMessage', handleNewMessage);
+        return () => {
+            socketRef.current.off('newMessage', handleNewMessage);
+        };
+    }, [activeChat]);
+
+    // Загрузка текущего пользователя
+    useEffect(() => {
+        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        setCurrentUser(profile);
+    }, []);
+
+    // Загрузка контактов при открытии приложения
+    useEffect(() => {
+        if (activeApp === "Telegram") {
+            loadContacts();
+        }
+    }, [activeApp]);
+
     // Хуйня для телефона
+
+    const handleClickChat = (name) => {
+        alert(`Вы выбрали чат с ${name}`);
+    };
+
+    const handleSendMessage = () => {
+        alert("Сообщение отправлено!");
+    };
+
     const [isIframeOpen, setIsIframeOpen] = useState(false);
     const [iframeUrl, setIframeUrl] = useState('');
 
     const [appsHidden, setAppsHidden] = useState(false);
-    const [activeApp, setActiveApp] = useState(null);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
     const handleAppClick = (appName) => {
@@ -1175,10 +1278,11 @@ function Game({ avatarUrl, gender }) {
                       top: '20px',
                       left: '20px',
                       width: '25%',
-                      height: '100%',
+                      height: '10%',
                       padding: '10px',
                       borderRadius: '15px',
                       fontSize: '14px',
+                      fontFamily: 'Roboto, sans-serif',
                       zIndex: 10,
                       opacity: isChatVisible ? 1 : 0,
                       transition: 'opacity 0.3s ease',
@@ -1217,36 +1321,57 @@ function Game({ avatarUrl, gender }) {
                       overflowY: 'auto',
                       padding: '5px',
                       borderRadius: '10px',
-                      color: 'white'
+                      color: 'white',
+                      fontFamily: 'Roboto, sans-serif'
                   }}>
                   </div>
-                  <input
-                      id="chatInput"
-                      type="text"
-                      placeholder="Введите сообщение..."
-                      style={{
-                          width: '50%',
-                          padding: '5px',
-                          position: 'relative',
-                          left: '15px',
-                          top: '63%',
-                          opacity: '50%'
-                      }}
-                      onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                              const msg = e.target.value.trim();
-                              if (msg) {
-                                  socketRef.current?.emit('chatMessage', {
-                                      message: msg,
-                                      name: mountRef.current
-                                  });
-                                  console.log('отправил', msg);
-                                  e.target.value = '';
-                              }
-                          }
-                      }}
-                  />
               </div>
+          </DoubleTapWrapper>
+
+          <DoubleTapWrapper>
+              <input
+                  id="chatInput"
+                  type="text"
+                  placeholder="Введите сообщение..."
+                  style={{
+                      position: 'absolute',
+                      bottom: '20px',
+                      left: '20px',
+                      width: '25%',
+                      height: '2,5%',
+                      padding: '10px',
+                      borderRadius: '15px',
+                      fontSize: '14px',
+                      fontFamily: 'Roboto, sans-serif',
+                      zIndex: 10,
+                      opacity: isChatVisible ? 1 : 0,
+                      transition: 'opacity 0.3s ease',
+                      // Разрешаем клики даже когда невидим
+                      pointerEvents: 'auto',
+                      // Прозрачная область для кликов когда скрыт
+                      cursor: isChatVisible ? 'default' : 'pointer'
+                  }}
+                  onDoubleClick={() => setIsChatVisible(false)}
+                  onClick={() => {
+                      if (!isChatVisible) {
+                          setIsChatVisibchle(true);
+                      }
+                  }
+                  }
+                  onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                          const msg = e.target.value.trim();
+                          if (msg) {
+                              socketRef.current?.emit('chatMessage', {
+                                  message: msg,
+                                  name: mountRef.current
+                              });
+                              console.log('отправил', msg);
+                              e.target.value = '';
+                          }
+                      }
+                  }}
+              />
           </DoubleTapWrapper>
           {/*Телефон*/}
           <DoubleTapWrapper
@@ -1297,7 +1422,7 @@ function Game({ avatarUrl, gender }) {
                                   { src: "https://cdn-icons-png.flaticon.com/512/174/174855.png", alt: "YouTube", app: "YouTube" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail", app: "Gmail" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера", app: "Camera" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail" },
+                                  { src: "https://cdn.iconscout.com/icon/free/png-512/free-telegram-logo-icon-download-in-svg-png-gif-file-formats--social-media-brand-pack-logos-icons-3073750.png?f=webp&w=512", alt: "Telegram", app: "Telegram" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/2111/2111398.png", alt: "Instagram" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732228.png", alt: "Google Drive" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
@@ -1409,7 +1534,198 @@ function Game({ avatarUrl, gender }) {
                                           </div>
                                       </main>
                                   </div>
-                              )}
+                                  )}
+                                  {/*Хуячим Телеграм*/ }
+                                  {activeApp === "Telegram" && (
+                                      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                                          <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                              <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
+                                          </div>
+
+                                          <div style={{ width: "100%", height: "90%", display: "flex" }}>
+                                              {/* Боковая панель контактов */}
+                                              <div style={{ width: "25%", height: "100%", backgroundColor: "#f0f0f0", padding: "2%" }}>
+                                                  {/* Поиск пользователей */}
+                                                  <div style={{ display: "flex", marginBottom: "10px" }}>
+                                                      <input
+                                                          type="text"
+                                                          value={searchTerm}
+                                                          onChange={(e) => setSearchTerm(e.target.value)}
+                                                          placeholder="Поиск..."
+                                                          style={{ flex: 1, padding: "5px", width: '130px' }}
+                                                      />
+                                                      <button onClick={searchUsers} style={{ padding: "5px" }}>🔍</button>
+                                                  </div>
+
+                                                  {/* Результаты поиска */}
+                                                  {searchResults.length > 0 && (
+                                                      <div style={{ marginBottom: "10px" }}>
+                                                          <div style={{ fontWeight: "bold" }}>Результаты поиска:</div>
+                                                          {searchResults.map(user => (
+                                                              <div
+                                                                  key={user.id}
+                                                                  onClick={() => {
+                                                                      setActiveChat(user);
+                                                                      loadMessages(user.id);
+                                                                      setSearchTerm('');
+                                                                      setSearchResults([]);
+                                                                  }}
+                                                                  style={{ padding: "5px", cursor: "pointer", backgroundColor: "#e0e0e0" }}
+                                                              >
+                                                                  {user.first_name} {user.last_name}
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  )}
+
+                                                  {/* Список контактов */}
+                                                  <div style={{ fontSize: "120%", fontWeight: "bold", marginBottom: "10px" }}>Контакты</div>
+                                                  <div style={{ maxHeight: "calc(100% - 100px)", overflowY: "auto" }}>
+                                                      {contacts.map(contact => (
+                                                          <div
+                                                              key={contact.id}
+                                                              onClick={() => {
+                                                                  setActiveChat(contact);
+                                                                  loadMessages(contact.id);
+                                                              }}
+                                                              style={{
+                                                                  padding: "8px",
+                                                                  backgroundColor: activeChat?.id === contact.id ? "#dcdcdc" : "transparent",
+                                                                  marginBottom: "5px",
+                                                                  cursor: "pointer",
+                                                                  borderRadius: "5px"
+                                                              }}
+                                                          >
+                                                              {contact.first_name} {contact.last_name}
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              </div>
+
+                                              {/* Область чата */}
+                                              <div style={{ width: "70%", height: "80%", display: "flex", flexDirection: "column" }}>
+                                                  {activeChat ? (
+                                                      <>
+                                                          {/* Шапка чата */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              top: '100px',
+                                                              height: "5%",
+                                                              width: '40%',
+                                                              backgroundColor: "#e8e8e8",
+                                                              display: "flex",
+                                                              alignItems: "center",
+                                                              padding: "0 2%",
+                                                              borderBottom: "1px solid #ccc"
+                                                          }}>
+                                                              <div style={{ fontSize: "120%" }}>
+                                                                  {activeChat.first_name} {activeChat.last_name}
+                                                              </div>
+                                                          </div>
+
+                                                          {/* История сообщений */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              bottom: '20px',
+                                                              height: "57.5%",
+                                                              width: '70%',
+                                                              overflowY: "auto",
+                                                              padding: "1px",
+                                                              backgroundColor: "#fafafa",
+                                                              display: "flex",
+                                                              flexDirection: "column"
+                                                          }}>
+                                                              {chatMessages.map(msg => (
+                                                                  <div
+                                                                      key={msg.id}
+                                                                      style={{
+                                                                          marginBottom: "10px",
+                                                                          alignSelf: msg.sender_id === currentUser?.id ? "flex-end" : "flex-start",
+                                                                          maxWidth: "80%"
+                                                                      }}
+                                                                  >
+                                                                      <div style={{
+                                                                          backgroundColor: msg.sender_id === currentUser?.id ? "#dcf8c6" : "#ffffff",
+                                                                          padding: "10px",
+                                                                          borderRadius: "10px",
+                                                                          boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                                                      }}>
+                                                                          {msg.message}
+                                                                      </div>
+                                                                      <div style={{
+                                                                          fontSize: "10px",
+                                                                          color: "#777",
+                                                                          marginTop: "4px",
+                                                                          textAlign: msg.sender_id === currentUser?.id ? "right" : "left"
+                                                                      }}>
+                                                                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                      </div>
+                                                                  </div>
+                                                              ))}
+                                                          </div>
+
+                                                          {/* Поле ввода */}
+                                                          <div style={{
+                                                              position: 'absolute',
+                                                              bottom: '5px',
+                                                              height: "10%",
+                                                              display: "flex",
+                                                              padding: "1px",
+                                                              borderTop: "1px solid #ccc",
+                                                              backgroundColor: "#fff"
+                                                          }}>
+                                                              <input
+                                                                  value={newMessage}
+                                                                  onChange={(e) => setNewMessage(e.target.value)}
+                                                                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                                                                  style={{ flex: 1, padding: "10px", borderRadius: "20px", border: "1px solid #ddd" }}
+                                                                  placeholder="Введите сообщение..."
+                                                                  style={{width: '80px'} }
+                                                              />
+                                                              <button
+                                                                  onClick={sendMessage}
+                                                                  style={{
+                                                                      padding: "10px",
+                                                                      marginLeft: "10px",
+                                                                      backgroundColor: "#0088cc",
+                                                                      border: "none",
+                                                                      borderRadius: "20px",
+                                                                      cursor: "pointer",
+                                                                      width: '40px',
+                                                                      height: '40px',
+                                                                      display: 'flex',
+                                                                      alignItems: 'center',
+                                                                      justifyContent: 'center'
+                                                                  }}
+                                                              >
+                                                                  <svg
+                                                                      xmlns="http://www.w3.org/2000/svg"
+                                                                      width="16"
+                                                                      height="16"
+                                                                      viewBox="0 0 24 24"
+                                                                      fill="white"
+                                                                  >
+                                                                      <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
+                                                                  </svg>
+                                                              </button>
+                                                          </div>
+                                                      </>
+                                                  ) : (
+                                                      // Заглушка, если чат не выбран
+                                                      <div style={{
+                                                          display: "flex",
+                                                          justifyContent: "center",
+                                                          alignItems: "center",
+                                                          height: "100%",
+                                                          color: "#777"
+                                                      }}>
+                                                          <div>Выберите контакт для начала общения</div>
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      </div>
+                                  )}
 
 
                           </div>

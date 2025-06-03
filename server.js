@@ -1,3 +1,11 @@
+const { Pool } = require('pg');
+const pool = new Pool({
+    // ... ваши параметры ...
+    connectionTimeoutMillis: 2000,
+    query_timeout: 5000,
+    log: (msg) => console.log('DB:', msg)
+});
+
 require('dotenv').config();
 const express = require('express');
 const db = require('./db');
@@ -6,6 +14,52 @@ const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.post('/api/register', async (req, res) => {
+    console.log('register request:', req.body);
+
+    try {
+        const { email, password, firstName, lastName, gender, age, city, avatarURL } = req.body;
+
+        // Проверка существования пользователя
+        const userCheck = await db.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
+        if (userCheck.rowCount > 0) {
+            console.log('Email already exists:', email);
+            return res.status(400).json({ error: 'Почта уже занята' });
+        }
+
+        console.log('Hashing password...');
+        const hash = await bcrypt.hash(password, 10);
+
+        console.log('Inserting user into database...');
+        const insertSQL = `
+      INSERT INTO users(email, password_hash, first_name, last_name, gender, age, city, avatar_url)
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id, email, created_at
+    `;
+
+        const result = await db.query(insertSQL, [
+            email, hash, firstName, lastName, gender, age, city, avatarURL
+        ]);
+
+        if (result.rows.length === 0) {
+            throw new Error('User creation failed');
+        }
+
+        const user = result.rows[0];
+        console.log('User created:', user.id);
+
+        const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
+            expiresIn: '12h'
+        });
+
+        res.json({ success: true, token });
+
+    } catch (err) {
+        console.error('Registration error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -42,6 +96,170 @@ function authenticate(req, res, next) {
   }
 }
 
+async function initializeDatabase() {
+    try {
+        // Проверяем существование таблицы messages
+        const { rows } = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'messages'
+      )
+    `);
+
+        if (!rows[0].exists) {
+            console.log('Creating database tables...');
+
+            // Создаем таблицу пользователей (если не существует)
+            await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          first_name VARCHAR(50),
+          last_name VARCHAR(50),
+          gender VARCHAR(10),
+          age INTEGER,
+          city VARCHAR(100),
+          avatar_url VARCHAR(255),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+            // Создаем таблицу сообщений
+            await db.query(`
+        CREATE TABLE messages (
+          id SERIAL PRIMARY KEY,
+          sender_id INTEGER NOT NULL REFERENCES users(id),
+          receiver_id INTEGER NOT NULL REFERENCES users(id),
+          message TEXT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          is_read BOOLEAN DEFAULT false
+        )
+      `);
+
+            // Создаем индексы для ускорения поиска
+            await db.query('CREATE INDEX idx_messages_sender ON messages(sender_id)');
+            await db.query('CREATE INDEX idx_messages_receiver ON messages(receiver_id)');
+            await db.query('CREATE INDEX idx_messages_created ON messages(created_at)');
+
+            console.log('Database tables created successfully');
+        }
+    } catch (err) {
+        console.error('Error initializing database:', err);
+    }
+}
+
+// Вызываем инициализацию БД при запуске сервера
+initializeDatabase();
+
+// ================== СОКЕТ ДЛЯ ОТПРАВКИ СООБЩЕНИЙ ================== //
+const messageSockets = {}; // {userId: socketId}
+
+io.on('connection', socket => {
+    // ... существующий код подключения ...
+
+    // Сохраняем связь userID -> socketID для отправки сообщений
+    if (socket.userId) {
+        messageSockets[socket.userId] = socket.id;
+    }
+
+    // Обработка отключения
+    socket.on('disconnect', () => {
+        // ... существующий код отключения ...
+
+        // Удаляем связь пользователя
+        if (socket.userId) {
+            delete messageSockets[socket.userId];
+        }
+    });
+});
+
+// ================== API ДЛЯ РАБОТЫ С СООБЩЕНИЯМИ ================== //
+
+// Получение ID пользователя по socketId
+app.get('/api/user-id/:socketId', authenticate, async (req, res) => {
+    const socketId = req.params.socketId;
+    const player = players[socketId];
+    if (!player || !player.userId) {
+        return res.status(404).json({ error: 'Player not found' });
+    }
+    res.json({ userId: player.userId });
+});
+
+// Отправка сообщения
+app.post('/api/messages', authenticate, async (req, res) => {
+    const { receiver_id, message } = req.body;
+
+    try {
+        // Сохраняем сообщение в базе данных
+        const result = await db.query(
+            `INSERT INTO messages (sender_id, receiver_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+            [req.user.id, receiver_id, message]
+        );
+
+        const savedMessage = result.rows[0];
+
+        // Отправляем сообщение через сокет получателю, если он онлайн
+        if (messageSockets[receiver_id]) {
+            io.to(messageSockets[receiver_id]).emit('newMessage', savedMessage);
+        }
+
+        res.status(201).json(savedMessage);
+    } catch (err) {
+        console.error('Error saving message:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Получение истории сообщений
+app.get('/api/messages', authenticate, async (req, res) => {
+    try {
+        const otherUserId = req.query.userId;
+        const { rows } = await db.query(
+            `SELECT m.*, 
+        u.first_name AS sender_first_name,
+        u.last_name AS sender_last_name
+      FROM messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE (sender_id = $1 AND receiver_id = $2)
+         OR (sender_id = $2 AND receiver_id = $1)
+      ORDER BY created_at ASC`,
+            [req.user.id, otherUserId]
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error('Error fetching messages:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Поиск пользователей для чата
+app.get('/api/users/search', authenticate, async (req, res) => {
+    try {
+        const searchTerm = `%${req.query.term}%`;
+        const { rows } = await db.query(
+            `SELECT id, first_name, last_name
+      FROM users
+      WHERE CONCAT(first_name, ' ', last_name) ILIKE $1
+        AND id != $2
+      LIMIT 10`,
+            [searchTerm, req.user.id]
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error('Error searching users:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// После создания пула БД
+db.query('SELECT NOW()')
+    .then(res => console.log('Database connected at:', res.rows[0].now))
+    .catch(err => console.error('Database connection error:', err));
 app.use(express.static(path.join(__dirname, 'build')));
 
 let players = {};
