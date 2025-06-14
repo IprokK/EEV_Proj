@@ -1,3 +1,8 @@
+/*
+- Проблема с игроками они множатся
+- Проблема с перемещением между городами (исчезновение и появление игроков)
+- Проблема с Null полусферами
+*/
 import React, { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -123,10 +128,12 @@ function Game({ avatarUrl, gender }) {
   }
 
   useEffect(() => {
+    console.log('[DEBUG] useEffect вызван');
     const mount = mountRef.current;
-    // В useEffect, где определяются переменные и функции, добавьте буфер для ICE-кандидатов (18.05.2025):
-  
-    if (!mount) return;
+    if (!mount) {
+      console.log('[DEBUG] mountRef.current не определён!');
+      return;
+    }
 
     console.log('–– useEffect начало');
 
@@ -460,10 +467,25 @@ function Game({ avatarUrl, gender }) {
     socket.on('connect', () => console.log('Socket connected, id=', socket.id));
     socket.on('currentPlayers', (players) => {
       console.log('currentPlayers', players);
+      // Получаем cityId текущего игрока из профиля
+      const myProfile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+      const myCityId = myProfile.last_city_id || 1;
       Object.keys(players).forEach(id => {
         if (id === socket.id) return;
-        const { x, z, avatarURL, gender, firstName, lastName } = players[id];
+        const { x, z, avatarURL, gender, firstName, lastName, cityId } = players[id];
+        if (cityId && cityId !== myCityId) return; // показываем только игроков своего города
         addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName);
+      });
+      // После получения списка игроков, отправляем newPlayer о себе
+      const profile = myProfile;
+      socket.emit('newPlayer', {
+        x: player?.position?.x || 0,
+        z: player?.position?.z || 0,
+        avatarURL: avatarUrl,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        userId: profile.id,
+        cityId: myCityId
       });
     });
 
@@ -573,6 +595,7 @@ function Game({ avatarUrl, gender }) {
     }
 
     async function init() {
+      console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
 
       const aspect = window.innerWidth / window.innerHeight;
@@ -618,59 +641,66 @@ function Game({ avatarUrl, gender }) {
         map: baseTexture,
       });
 
-      const modelsToLoad = [
-        { name: 'Burger', path: 'models/copied/building-burger-joint.glb', position: new THREE.Vector3(25, 0, 50) },
-        { name: 'HouseSmall', path: 'models/copied/building-house-family-small.glb', position: new THREE.Vector3(25, 0, 0) },
-        { name: 'HouseOld', path: 'models/copied/building-house-block-old.glb', position: new THREE.Vector3(25, 0, 25) },
-        { name: 'HouseModernBig2', path: 'models/copied/building-house-modern-big.glb', position: new THREE.Vector3(50, 0, 25) },
-        { name: 'HouseModernBig2', path: 'models/copied/building-hotel.glb', position: new THREE.Vector3(100, 0, 25) },
-        { name: 'HouseModernBig2', path: 'models/copied/building-cinema.glb', position: new THREE.Vector3(150, 0, 25) },
-        { name: 'HouseModernBig2', path: 'models/copied/building-mall.glb', position: new THREE.Vector3(250, 0, 25) },
-        { name: 'HouseSmall', path: 'models/copied/building-house-family-small.glb', position: new THREE.Vector3(70, 0, 25) },
-        { name: 'HouseModernBig', path: 'models/copied/building-house-modern-big.glb', position: new THREE.Vector3(10, 0, 25) },
-        { name: 'HouseModernBig2', path: 'models/copied/building-mall.glb', position: new THREE.Vector3(-25, 0, 25) },
-        { name: 'HouseSmall', path: 'models/copied/building-house-family-small.glb', position: new THREE.Vector3(-50, 0, 25) },
-        { name: 'HouseModernBig', path: 'models/copied/building-house-modern-big.glb', position: new THREE.Vector3(-70, 0, 25) },
-      ];
-
+      // Загрузка объектов города из базы данных
       let loadedModelsCount = 0;
-      const totalModelsToLoad = modelsToLoad.length;
+      let cityObjects = [];
+      let totalModelsToLoad = 0;
+      try {
+        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        const cityId = profile.last_city_id || 1; // по умолчанию 1, если нет
+        console.log('[DEBUG] cityId для загрузки объектов:', cityId);
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/cities/${cityId}/objects`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        cityObjects = await res.json();
+        console.log('[DEBUG] Список объектов для загрузки (cityObjects):', cityObjects);
+        totalModelsToLoad = cityObjects.length;
+      } catch (e) {
+        console.error('[DEBUG] Ошибка загрузки объектов города:', e);
+        cityObjects = [];
+        totalModelsToLoad = 0;
+      }
 
-      modelsToLoad.forEach(modelData => {
-        gltfLoader.load(
-          modelData.path,
-          (gltf) => {
-            const model = gltf.scene;
-            model.userData = {
-              type: modelData.name,
-              rent: modelData.rent ?? 'не указано',
-              tax: modelData.tax ?? 'не указано'
-            };
-            model.scale.set(1, 1, 1);
-            model.position.copy(modelData.position);
-            model.traverse(child => {
-              if (child.isMesh) {
-                child.material = customMaterial.clone();
-                child.material.needsUpdate = true;
+      console.log('[DEBUG] cityObjects:', cityObjects);
+      try {
+        cityObjects.forEach(obj => {
+          console.log('[DEBUG] Загружаю объект:', obj);
+          gltfLoader.load(
+            obj.model_url,
+            (gltf) => {
+              const model = gltf.scene;
+              model.userData = { type: obj.name };
+              model.scale.set(1, 1, 1);
+              model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
+              model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
+              model.traverse(child => {
+                if (child.isMesh) {
+                  child.material = customMaterial.clone();
+                  child.material.needsUpdate = true;
+                }
+              });
+              scene.add(model);
+              model.updateMatrixWorld();
+              const boundingBox = new THREE.Box3().setFromObject(model);
+              obstacles.push({ mesh: model, box: boundingBox });
+
+              loadedModelsCount++;
+              console.log(`[DEBUG] Модель ${obj.name} успешно загружена (${loadedModelsCount}/${totalModelsToLoad})`);
+              if (loadedModelsCount === totalModelsToLoad) {
+                console.log('[DEBUG] Все модели загружены. Строим сетку...');
+                buildPathfindingGrid();
               }
-            });
-            scene.add(model);
-            model.updateMatrixWorld();
-            const boundingBox = new THREE.Box3().setFromObject(model);
-            obstacles.push({ mesh: model, box: boundingBox });
-
-            loadedModelsCount++;
-            if (loadedModelsCount === totalModelsToLoad) {
-              console.log("Все модели загружены. Строим сетку...");
-              buildPathfindingGrid();
+            },
+            undefined,
+            (error) => {
+              console.error(`[DEBUG] Ошибка загрузки модели ${obj.name}:`, error);
             }
-          },
-          undefined,
-          (error) => {
-            console.error(`Ошибка загрузки модели ${modelData.name}:`, error);
-          }
-        );
-      });
+          );
+        });
+      } catch (e) {
+        console.error('[DEBUG] Ошибка в cityObjects.forEach:', e);
+      }
 
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
@@ -1090,9 +1120,114 @@ function Game({ avatarUrl, gender }) {
     };
   }, []);
 
+  const [showWorldMap, setShowWorldMap] = useState(false);
+  const [cities, setCities] = useState([]);
+
+  // Получить список городов при открытии карты мира
+  async function openWorldMap() {
+    setShowWorldMap(true);
+    const token = localStorage.getItem('token');
+    const res = await fetch('/api/cities', { headers: { Authorization: `Bearer ${token}` } });
+    console.log('Ответ /api/cities:', res);
+    if (res.ok) {
+      const data = await res.json();
+      console.log('Данные городов:', data);
+      setCities(data);
+    } else {
+      console.warn('Ошибка загрузки городов:', res.status, res.statusText);
+    }
+  }
+
+  function closeWorldMap() {
+    setShowWorldMap(false);
+  }
+
+  async function handleCitySelect(cityId) {
+    setShowWorldMap(false);
+    // Отправляем событие на сервер
+    socketRef.current?.emit('cityChange', { cityId });
+    // Обновляем профиль в sessionStorage
+    const token = localStorage.getItem('token');
+    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      const profile = await res.json();
+      profile.last_city_id = cityId; // явно обновляем поле
+      sessionStorage.setItem('user_profile', JSON.stringify(profile));
+    }
+    window.location.reload();
+  }
+
   return (
-    <>
-      <div ref={mountRef} style={{ width: '100vw', height: '100vh' }} />
+    <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      {/* Кнопка карты мира */}
+      <button
+        style={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          zIndex: 1000,
+          padding: '10px 18px',
+          background: '#0047ab',
+          color: 'white',
+          border: 'none',
+          borderRadius: '8px',
+          fontSize: '18px',
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+        }}
+        onClick={openWorldMap}
+      >
+        Карта мира
+      </button>
+
+      {/* Модальное окно выбора города */}
+      {showWorldMap && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          background: 'rgba(0,0,0,0.5)',
+          zIndex: 2000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '32px',
+            minWidth: '350px',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.25)'
+          }}>
+            <h2 style={{ marginTop: 0 }}>Выберите город</h2>
+            <ul style={{ listStyle: 'none', padding: 0 }}>
+              {cities.map(city => (
+                <li key={city.id} style={{ margin: '12px 0' }}>
+                  <button
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      fontSize: '16px',
+                      borderRadius: '8px',
+                      border: '1px solid #0047ab',
+                      background: '#f1f6ff',
+                      color: '#0047ab',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s'
+                    }}
+                    onClick={() => handleCitySelect(city.id)}
+                  >
+                    {city.name} ({city.country_name})
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button onClick={closeWorldMap} style={{ marginTop: 16, background: '#eee', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>Закрыть</button>
+          </div>
+        </div>
+      )}
 
       {selectedHouse && (
         <div style={{
@@ -1308,7 +1443,7 @@ function Game({ avatarUrl, gender }) {
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png", alt: "Phone" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Camera" },
+                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png", alt: "Gallery" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828970.png", alt: "Music" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828961.png", alt: "Notes" },
@@ -1371,7 +1506,6 @@ function Game({ avatarUrl, gender }) {
                                                   alt="ЖК Комфорт"
                                                   style={imageStyle}
                                               />
-                                              <h3 style={listingTitleStyle}>ЖК «Комфорт», Красногвардейский район</h3>
                                               <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
                                           </div>
                                       </main>
@@ -1409,7 +1543,6 @@ function Game({ avatarUrl, gender }) {
                                                   alt="ЖК Комфорт"
                                                   style={imageStyle}
                                               />
-                                              <h3 style={listingTitleStyle}>ЖК «Комфорт», Красногвардейский район</h3>
                                               <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
                                           </div>
                                       </main>
@@ -1459,7 +1592,7 @@ function Game({ avatarUrl, gender }) {
                   </div>
               </div>
           </DoubleTapWrapper>
-    </>
+    </div>
   );
 }
 

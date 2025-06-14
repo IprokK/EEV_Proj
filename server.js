@@ -46,56 +46,88 @@ app.use(express.static(path.join(__dirname, 'build')));
 
 let players = {};
 
+// --- Расширяем players для поддержки городов ---
+let playersByCity = {};
+
 io.on('connection', socket => {
   console.log('Player connected:', socket.id);
 
-  players[socket.id] = {
-    socketId: socket.id,
-    userId: socket.userId,
-    x: 0,
-    z: 0,
-    avatarURL: null,
-    gender: null,
-    firstName: null,
-    lastName: null
-  };
+  // Получаем город игрока из БД
+  (async () => {
+    const { rows } = await db.query('SELECT last_city_id, last_pos_x, last_pos_z FROM users WHERE id = $1', [socket.userId]);
+    const cityId = rows[0]?.last_city_id || 1;
+    const x = rows[0]?.last_pos_x || 0;
+    const z = rows[0]?.last_pos_z || 0;
+    if (!playersByCity[cityId]) playersByCity[cityId] = {};
+    playersByCity[cityId][socket.id] = {
+      socketId: socket.id,
+      userId: socket.userId,
+      x,
+      z,
+      cityId,
+      avatarURL: null,
+      gender: null,
+      firstName: null,
+      lastName: null
+    };
+    socket.cityId = cityId;
+    socket.x = x;
+    socket.z = z;
+    // Отправляем только игроков этого города
+    socket.emit('currentPlayers', playersByCity[cityId]);
+  })();
 
-  socket.emit('currentPlayers', players);
-
+  // --- Новый игрок ---
   socket.on('newPlayer', data => {
-    const p = players[socket.id];
+    const cityId = data.cityId || socket.cityId || 1;
+    if (!playersByCity[cityId]) playersByCity[cityId] = {};
+    const p = playersByCity[cityId][socket.id] || {};
     Object.assign(p, {
       x: data.x,
       z: data.z,
+      cityId,
       avatarURL: data.avatarURL || null,
       gender: data.gender || null,
       firstName: data.firstName || '',
       lastName: data.lastName || ''
     });
-    socket.broadcast.emit('newPlayer', {
-      playerId: socket.id,
-      x:        p.x,
-      z:        p.z,
-      avatarURL: p.avatarURL,
-      gender:   p.gender,
-      firstName:p.firstName,
-      lastName: p.lastName
-    });
+    playersByCity[cityId][socket.id] = p;
+    socket.cityId = cityId;
+    // Сообщаем только игрокам этого города
+    for (const id in playersByCity[cityId]) {
+      if (id !== socket.id) {
+        io.to(id).emit('newPlayer', {
+          playerId: socket.id,
+          x: p.x,
+          z: p.z,
+          avatarURL: p.avatarURL,
+          gender: p.gender,
+          firstName: p.firstName,
+          lastName: p.lastName
+        });
+      }
+    }
   });
 
+  // --- Перемещение игрока ---
   socket.on('playerMovement', movementData => {
-    if (players[socket.id]) {
-      players[socket.id].x = movementData.x;
-      players[socket.id].z = movementData.z;
-      socket.broadcast.emit('playerMoved', {
-        playerId: socket.id,
-        x: movementData.x,
-        z: movementData.z
-      });
-
-      // Notify nearby players for voice chat
-      const sender = players[socket.id];
-      for (const [id, other] of Object.entries(players)) {
+    const cityId = socket.cityId;
+    if (playersByCity[cityId] && playersByCity[cityId][socket.id]) {
+      playersByCity[cityId][socket.id].x = movementData.x;
+      playersByCity[cityId][socket.id].z = movementData.z;
+      // Сообщаем только игрокам этого города
+      for (const id in playersByCity[cityId]) {
+        if (id !== socket.id) {
+          io.to(id).emit('playerMoved', {
+            playerId: socket.id,
+            x: movementData.x,
+            z: movementData.z
+          });
+        }
+      }
+      // Voice chat nearby только в этом городе
+      const sender = playersByCity[cityId][socket.id];
+      for (const [id, other] of Object.entries(playersByCity[cityId])) {
         if (id === socket.id) continue;
         const dx = sender.x - other.x;
         const dz = sender.z - other.z;
@@ -108,15 +140,15 @@ io.on('connection', socket => {
     }
   });
 
+  // --- Чат ---
   socket.on('chatMessage', ({ message, name }) => {
-    const sender = players[socket.id];
+    const cityId = socket.cityId;
+    const sender = playersByCity[cityId]?.[socket.id];
     if (!sender) return;
-
-    for (const [id, other] of Object.entries(players)) {
+    for (const [id, other] of Object.entries(playersByCity[cityId])) {
       const dx = sender.x - other.x;
       const dz = sender.z - other.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-
       if (dist <= 50 || id === socket.id) {
         io.to(id).emit('chatMessage', {
           playerId: socket.id,
@@ -128,7 +160,7 @@ io.on('connection', socket => {
     }
   });
 
-  // WebRTC signaling
+  // --- WebRTC signaling ---
   socket.on('voiceChatOffer', ({ to, offer }) => {
     io.to(to).emit('voiceChatOffer', { from: socket.id, offer });
   });
@@ -146,10 +178,49 @@ io.on('connection', socket => {
     socket.broadcast.emit('voiceChatStatus', { playerId: socket.id, enabled });
   });
 
-  socket.on('disconnect', () => {
-    console.log('Player disconnected:', socket.id);
-    delete players[socket.id];
-    io.emit('playerDisconnected', socket.id);
+  // --- Смена города ---
+  socket.on('cityChange', async ({ cityId }) => {
+    const oldCity = socket.cityId;
+    if (playersByCity[oldCity]) {
+      delete playersByCity[oldCity][socket.id];
+      // Сообщаем игрокам старого города о выходе
+      for (const id in playersByCity[oldCity]) {
+        io.to(id).emit('playerDisconnected', socket.id);
+      }
+    }
+    if (!playersByCity[cityId]) playersByCity[cityId] = {};
+    playersByCity[cityId][socket.id] = {
+      socketId: socket.id,
+      userId: socket.userId,
+      x: 0,
+      z: 0,
+      cityId,
+      avatarURL: null,
+      gender: null,
+      firstName: null,
+      lastName: null
+    };
+    socket.cityId = cityId;
+    // Отправляем новых игроков этого города
+    socket.emit('currentPlayers', playersByCity[cityId]);
+  });
+
+  // --- Отключение ---
+  socket.on('disconnect', async () => {
+    const cityId = socket.cityId;
+    const player = playersByCity[cityId]?.[socket.id];
+    if (player) {
+      // Сохраняем координаты и город выхода
+      await db.query(
+        'UPDATE users SET last_city_id = $1, last_pos_x = $2, last_pos_z = $3 WHERE id = $4',
+        [cityId, player.x, player.z, player.userId]
+      );
+      delete playersByCity[cityId][socket.id];
+      // Сообщаем игрокам города о выходе
+      for (const id in playersByCity[cityId]) {
+        io.to(id).emit('playerDisconnected', socket.id);
+      }
+    }
   });
 });
 
@@ -266,6 +337,36 @@ app.post('/api/login', async (req, res) => {
       avatarURL: user.avatarURL
     }
   });
+});
+
+// Получить объекты города по cityId
+app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
+  const cityId = req.params.cityId;
+  try {
+    const { rows } = await db.query(`
+      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z
+      FROM city_objects
+      WHERE city_id = $1
+    `, [cityId]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: 'Ошибка получения объектов города' });
+  }
+});
+
+// Получить список городов с названием и страной
+app.get('/api/cities', authenticate, async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT cities.id, cities.name, countries.name AS country_name
+      FROM cities
+      JOIN countries ON cities.country_id = countries.id
+      ORDER BY countries.name, cities.name
+    `);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: 'Ошибка получения списка городов' });
+  }
 });
 
 app.use((req, res) => {
