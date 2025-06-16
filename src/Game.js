@@ -53,6 +53,10 @@ function Game({ avatarUrl, gender }) {
     }
 
     async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
+      if (remotePlayers[id]) {
+        console.warn(`duplicate player ${id} ignored`);
+        return;
+      }
       let model;
       try {
         if (!avatarURL) throw new Error('no avatarURL');
@@ -778,6 +782,7 @@ function Game({ avatarUrl, gender }) {
       renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
       window.removeEventListener('resize', onWindowResize);
       mountRef.current.removeChild(renderer.domElement);
+      socket.disconnect();
     };
   }, []);
 
