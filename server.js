@@ -2,7 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const db = require('./db');
 const path = require('path');
+const fs = require('fs');
 const app = express();
+
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -351,6 +353,41 @@ app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: 'Ошибка получения объектов города' });
+  }
+});
+
+// Получить список доступных моделей из public/models/copied
+app.get('/api/models', authenticate, async (req, res) => {
+  try {
+    const dir = path.join(__dirname, 'public', 'models', 'copied');
+    const files = await fs.promises.readdir(dir);
+    const glbs = files.filter(f => f.toLowerCase().endsWith('.glb'));
+    res.json(glbs);
+  } catch (e) {
+    res.status(500).json({ error: 'Ошибка чтения списка моделей' });
+  }
+});
+
+// Сохранить текущую карту в текстовый файл
+app.post('/api/save-map', authenticate, async (req, res) => {
+  const { cityId = 'unknown', objects, removedIds = [] } = req.body;
+  if (!Array.isArray(objects) || !Array.isArray(removedIds)) {
+    return res.status(400).json({ error: 'Invalid objects' });
+  }
+  try {
+    const dir = path.join(__dirname, 'saves');
+    await fs.promises.mkdir(dir, { recursive: true });
+    const file = `city_${cityId}_${Date.now()}.txt`;
+    const filePath = path.join(dir, file);
+    await fs.promises.writeFile(
+      filePath,
+      JSON.stringify({ objects, removedIds }, null, 2),
+      'utf8'
+    );
+    res.json({ ok: true, file });
+  } catch (e) {
+    console.error('Ошибка сохранения карты', e);
+    res.status(500).json({ error: 'Ошибка сохранения карты' });
   }
 });
 

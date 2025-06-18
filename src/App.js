@@ -8,6 +8,7 @@ import RegisterStep2    from './pages/RegisterStep2';
 import RegisterStep3    from './pages/RegisterStep3';
 import GameWrapper      from './components/GameWrapper';
 import RequireProfile   from './components/RequireProfile';
+import MapEditor        from './pages/MapEditor';
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(!!localStorage.getItem('token'));
@@ -46,6 +47,18 @@ export default function App() {
           isAuth
             ? <RequireProfile>
                 <GameWrapper />
+              </RequireProfile>
+            : <Navigate to="/login" replace/>
+        }
+      />
+
+      {/* редактор карты */}
+      <Route
+        path="/editor"
+        element={
+          isAuth
+            ? <RequireProfile>
+                <MapEditor />
               </RequireProfile>
             : <Navigate to="/login" replace/>
         }
