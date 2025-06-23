@@ -115,14 +115,22 @@ function Game({ avatarUrl, gender }) {
         localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
         setMicEnabled(true);
         socketRef.current?.emit('voiceChatToggle', { enabled: true });
-        // Add stream to existing connections
+        
+         const track = localStream.current.getAudioTracks()[0];
         Object.values(voiceConnections.current).forEach(conn => {
-          localStream.current.getTracks().forEach(track => {
-            conn.peerConnection.addTrack(track, localStream.current);
-          });
+          if (conn.audioSender && track) {
+            conn.audioSender.replaceTrack(track);
+          }
         });
       } else {
-        localStream.current?.getTracks().forEach(track => track.stop());
+        if (localStream.current) {
+          localStream.current.getTracks().forEach(track => track.stop());
+        }
+        Object.values(voiceConnections.current).forEach(conn => {
+          if (conn.audioSender) {
+            conn.audioSender.replaceTrack(null);
+          }
+        });
         localStream.current = null;
         setMicEnabled(false);
         socketRef.current?.emit('voiceChatToggle', { enabled: false });
@@ -334,20 +342,27 @@ function Game({ avatarUrl, gender }) {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
+      const transceiver = peerConnection.addTransceiver('audio', {
+        direction: 'sendrecv'
+      });
+
+      if (localStream.current) {
+        const track = localStream.current.getAudioTracks()[0];
+        if (track) {
+          transceiver.sender.replaceTrack(track);
+        }
+      }
+
+
       voiceConnections.current[peerId] = {
         peerConnection,
         audioElement: document.createElement('audio'),
-        pendingCandidates: []
+        pendingCandidates: [],
+        audioSender: transceiver.sender
       };
 
       voiceConnections.current[peerId].audioElement.autoplay = true;
       document.body.appendChild(voiceConnections.current[peerId].audioElement);
-
-      if (localStream.current) {
-        localStream.current.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream.current);
-        });
-      }
 
       peerConnection.ontrack = (event) => {
         voiceConnections.current[peerId].audioElement.srcObject = event.streams[0];
@@ -382,8 +397,12 @@ function Game({ avatarUrl, gender }) {
 
     function cleanupVoiceConnection(peerId) {
       if (voiceConnections.current[peerId]) {
-        voiceConnections.current[peerId].peerConnection.close();
-        voiceConnections.current[peerId].audioElement.remove();
+        const conn = voiceConnections.current[peerId];
+        try {
+          conn.audioSender?.replaceTrack(null);
+        } catch {}
+        conn.peerConnection.close();
+        conn.audioElement.remove();
         delete voiceConnections.current[peerId];
       }
     }
@@ -402,20 +421,26 @@ function Game({ avatarUrl, gender }) {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
 
+        const transceiver = peerConnection.addTransceiver('audio', {
+          direction: 'sendrecv'
+        });
+
+        if (localStream.current) {
+          const track = localStream.current.getAudioTracks()[0];
+          if (track) {
+            transceiver.sender.replaceTrack(track);
+          }
+        }
+
         voiceConnections.current[from] = {
           peerConnection,
           audioElement: document.createElement('audio'),
-          pendingCandidates: []
+          pendingCandidates: [],
+          audioSender: transceiver.sender
         };
 
         voiceConnections.current[from].audioElement.autoplay = true;
         document.body.appendChild(voiceConnections.current[from].audioElement);
-
-        if (localStream.current) {
-          localStream.current.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream.current);
-          });
-        }
 
         peerConnection.ontrack = (event) => {
           voiceConnections.current[from].audioElement.srcObject = event.streams[0];
