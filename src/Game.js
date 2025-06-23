@@ -17,6 +17,11 @@ function Game({ avatarUrl, gender }) {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStats, setPlayerStats] = useState(null);
   const [micEnabled, setMicEnabled] = useState(false);
+  const [orgMenu, setOrgMenu] = useState(null);
+  const [satiety, setSatiety] = useState(() => {
+    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    return p.satiety ?? 100;
+  });
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -127,6 +132,38 @@ function Game({ avatarUrl, gender }) {
     }
   }
 
+  async function openOrganizationMenu(objectId) {
+    const token = localStorage.getItem('token');
+    const res = await fetch(
+      `/api/organizations/by-object/${objectId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      setOrgMenu(data);
+      setSelectedHouse(null);
+    } else {
+      console.error('Не удалось загрузить меню организации для объекта', objectId);
+    }
+  }
+
+  async function buyItem(key) {
+    if (!orgMenu) return;
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/organizations/${orgMenu.id}/purchase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ itemKey: key })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setSatiety(data.satiety);
+      const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+      profile.satiety = data.satiety;
+      sessionStorage.setItem('user_profile', JSON.stringify(profile));
+    }
+  }
+
   useEffect(() => {
     console.log('[DEBUG] useEffect вызван');
     const mount = mountRef.current;
@@ -146,8 +183,8 @@ function Game({ avatarUrl, gender }) {
     let cameraPitchOffset = 0;
     const maxPitch = THREE.MathUtils.degToRad(10);
 
-    let zoom = 25;
-    const minZoom = zoom * 0.5;
+    let zoom = 10;
+    const minZoom = zoom * 0.1;
     const maxZoom = zoom * 1.5;
 
     let scene, camera, renderer;
@@ -172,7 +209,8 @@ function Game({ avatarUrl, gender }) {
     let destinationMarker;
 
     const token = localStorage.getItem('token');
-    socketRef.current = io(`37.27.238.225:4000`, {
+    socketRef.current = io({
+    transports: ['websocket','polling'],
       auth: { token }
     });
     const socket = socketRef.current;
@@ -351,8 +389,10 @@ function Game({ avatarUrl, gender }) {
     }
 
     socket.on('voiceChatNearby', ({ playerId }) => {
-      if (remotePlayers[playerId]) {
-        initiateVoiceChat(playerId);
+      if (remotePlayers[playerId] && !voiceConnections.current[playerId]) {
+        if (socket.id < playerId) {
+          initiateVoiceChat(playerId);
+        }
       }
     });
 
@@ -364,7 +404,8 @@ function Game({ avatarUrl, gender }) {
 
         voiceConnections.current[from] = {
           peerConnection,
-          audioElement: document.createElement('audio')
+          audioElement: document.createElement('audio'),
+          pendingCandidates: []
         };
 
         voiceConnections.current[from].audioElement.autoplay = true;
@@ -401,7 +442,9 @@ function Game({ avatarUrl, gender }) {
           const pendingCandidates = voiceConnections.current[from].pendingCandidates || [];
           for (const candidate of pendingCandidates) {
             try {
-              await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+              await voiceConnections.current[from].peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate)
+              );
             } catch (err) {
               console.error('Ошибка добавления буферизованного ICE кандидата:', err);
             }
@@ -425,7 +468,9 @@ function Game({ avatarUrl, gender }) {
           const pending = voiceConnections.current[from].pendingCandidates || [];
           for (const candidate of pending) {
             try {
-              await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+              await voiceConnections.current[from].peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate)
+              );
             } catch (err) {
               console.error('Ошибка добавления буферизованного ICE кандидата:', err);
             }
@@ -436,6 +481,7 @@ function Game({ avatarUrl, gender }) {
         }
       }
     });
+
 
     // Замените обработчик voiceChatIceCandidate на (18.05.2025):
     socket.on('voiceChatIceCandidate', async ({ from, candidate }) => {
@@ -670,7 +716,14 @@ function Game({ avatarUrl, gender }) {
             obj.model_url,
             (gltf) => {
               const model = gltf.scene;
-              model.userData = { type: obj.name };
+              model.userData = {
+                id: obj.id,                    // уникальный ID объекта
+                type: obj.name,                // название типа модели
+                organizationId: obj.organization_id, // ID организации
+                rent: obj.rent,                // стоимость аренды (если есть)
+                tax: obj.tax                   // налог (если есть)
+              };
+
               model.scale.set(1, 1, 1);
               model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
               model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
@@ -845,12 +898,19 @@ function Game({ avatarUrl, gender }) {
       if (houseIntersects.length) {
         const mesh = houseIntersects[0].object;
         const root = mesh.parent;
-        const { type, rent, tax } = root.userData;
-        setSelectedHouse({ type, rent, tax });
+        const { id: objectId, type, rent, tax, organizationId } = root.userData;
+        if (objectId && organizationId) {
+          // Вызываем меню по правильному ID объекта
+          openOrganizationMenu(objectId);
+        } else {
+          // Простое окно информации об аренде/налоге
+          setSelectedHouse({ type, rent, tax });
+        }
         return;
       }
 
       setSelectedHouse(null);
+      setOrgMenu(null);
 
       const remoteModels = Object.values(remotePlayers).map(r => r.model);
       const playerIntersects = raycaster.intersectObjects(remoteModels, true);
@@ -1159,6 +1219,9 @@ function Game({ avatarUrl, gender }) {
 
   return (
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Сытость: {satiety}
+      </div>
       {/* Кнопка карты мира */}
       <button
         style={{
@@ -1302,6 +1365,28 @@ function Game({ avatarUrl, gender }) {
               <p><b>Болезни:</b> {playerStats.diseases?.join(', ') || 'нет'}</p>
             </div>
           )}
+        </div>
+      )}
+
+      {orgMenu && (
+        <div style={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          background: 'rgba(0,0,0,0.8)',
+          color: '#fff',
+          padding: 16,
+          borderRadius: 8,
+          minWidth: 220
+        }}>
+          <h3 style={{ margin: 0, marginBottom: 8 }}>{orgMenu.name}</h3>
+          {orgMenu.menu && Object.keys(orgMenu.menu).map(key => (
+            <div key={key} style={{marginBottom:8}}>
+              <span>{orgMenu.menu[key].title} — {orgMenu.menu[key].price}₽</span>
+              <button onClick={() => buyItem(key)} style={{marginLeft:8}}>Купить</button>
+            </div>
+          ))}
+          <button onClick={() => setOrgMenu(null)} style={{ marginTop: 8 }}>Закрыть</button>
         </div>
       )}
 
