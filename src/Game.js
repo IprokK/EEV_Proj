@@ -342,23 +342,12 @@ function Game({ avatarUrl, gender }) {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
-      const transceiver = peerConnection.addTransceiver('audio', {
-        direction: 'sendrecv'
-      });
-
-      if (localStream.current) {
-        const track = localStream.current.getAudioTracks()[0];
-        if (track) {
-          transceiver.sender.replaceTrack(track);
-        }
-      }
-
 
       voiceConnections.current[peerId] = {
         peerConnection,
         audioElement: document.createElement('audio'),
         pendingCandidates: [],
-        audioSender: transceiver.sender
+        audioSender: null
       };
 
       voiceConnections.current[peerId].audioElement.autoplay = true;
@@ -421,22 +410,11 @@ function Game({ avatarUrl, gender }) {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
 
-        const transceiver = peerConnection.addTransceiver('audio', {
-          direction: 'sendrecv'
-        });
-
-        if (localStream.current) {
-          const track = localStream.current.getAudioTracks()[0];
-          if (track) {
-            transceiver.sender.replaceTrack(track);
-          }
-        }
-
         voiceConnections.current[from] = {
           peerConnection,
           audioElement: document.createElement('audio'),
           pendingCandidates: [],
-          audioSender: transceiver.sender
+          audioSender: null
         };
 
         voiceConnections.current[from].audioElement.autoplay = true;
@@ -463,6 +441,19 @@ function Game({ avatarUrl, gender }) {
 
         try {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+          const remoteTransceiver = peerConnection.getTransceivers().find(
+            t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio'
+          );
+          if (remoteTransceiver) {
+            remoteTransceiver.direction = 'sendrecv';
+            voiceConnections.current[from].audioSender = remoteTransceiver.sender;
+            if (localStream.current) {
+              const track = localStream.current.getAudioTracks()[0];
+              if (track) {
+                await remoteTransceiver.sender.replaceTrack(track);
+              }
+            }
+          }
           // В обработчике voiceChatOffer, после await peerConnection.setRemoteDescription, добавьте (18.05.2025):
           const pendingCandidates = voiceConnections.current[from].pendingCandidates || [];
           for (const candidate of pendingCandidates) {
