@@ -10,7 +10,9 @@ import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
 
+
 function Game({ avatarUrl, gender }) {
+    const [activeApp, setActiveApp] = useState(null);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
   const [selectedHouse, setSelectedHouse] = useState(null);
@@ -23,17 +25,25 @@ function Game({ avatarUrl, gender }) {
   const localStream = useRef(null);
   const voiceIcons = useRef({});
 
-  //Телефон
+    //Телефон
+    const [activeChat, setActiveChat] = useState(null);
+      // Добавьте этот код в начало компонента Game, рядом с другими состояниями
+    const [telegramContacts, setTelegramContacts] = useState([]);
     const [isIframeOpen, setIsIframeOpen] = useState(false);
     const [iframeUrl, setIframeUrl] = useState('');
 
+
+
+
     const [appsHidden, setAppsHidden] = useState(false);
-    const [activeApp, setActiveApp] = useState(null);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
     const handleAppClick = (appName) => {
         setAppsHidden(true);
         setActiveApp(appName);
+        if (appName === "Telegram") {
+            loadTelegramContacts(); // Загрузка контактов при открытии
+        }
     };
 
     const closeApp = () => {
@@ -88,7 +98,129 @@ function Game({ avatarUrl, gender }) {
         setIframeUrl('');
     };
 
-  //Телефон конец
+async function loadTelegramContacts() {
+  const token = localStorage.getItem('token');
+  try {
+    const res = await fetch('/api/users', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setTelegramContacts(data);
+    } else {
+      console.error('Ошибка загрузки контактов Telegram');
+    }
+  } catch (err) {
+    console.error('Ошибка сети:', err);
+  }
+    }
+
+    // Дополняем состояния
+    const [newMessage, setNewMessage] = useState("");
+    const [messageInterval, setMessageInterval] = useState(null);
+    const [messages, setMessages] = useState([]);
+    const [userProfile, setUserProfile] = useState(null);
+
+    // Функция загрузки сообщений
+    async function loadMessages(contactId) {
+        if (!contactId) return;
+
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`/api/messages/${contactId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                setMessages(data);
+
+                // Прокручиваем чат вниз
+                setTimeout(() => {
+                    const chatContainer = document.getElementById('chatContainer');
+                    if (chatContainer) {
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }
+                }, 100);
+            } else {
+                console.error('Ошибка загрузки сообщений');
+            }
+        } catch (err) {
+            console.error('Ошибка сети:', err);
+        }
+    }
+
+    // Функция отправки сообщения
+    async function sendMessage() {
+        if (!activeChat || !newMessage.trim()) return;
+
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch('/api/messages/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    receiverId: activeChat.id,
+                    message: newMessage
+                })
+            });
+
+            if (res.ok) {
+                setNewMessage("");
+                // После отправки сразу обновляем сообщения
+                loadMessages(activeChat.id);
+            } else {
+                console.error('Ошибка отправки сообщения');
+            }
+        } catch (err) {
+            console.error('Ошибка сети:', err);
+        }
+    }
+
+    // Запускаем интервал при открытии чата
+    useEffect(() => {
+        if (activeChat) {
+            // Первоначальная загрузка сообщений
+            loadMessages(activeChat.id);
+
+            // Запускаем интервал для проверки новых сообщений
+            const interval = setInterval(() => {
+                loadMessages(activeChat.id);
+            }, 1000); // Проверка каждую секунду
+
+            setMessageInterval(interval);
+
+            // Очищаем интервал при закрытии чата
+            return () => {
+                if (interval) clearInterval(interval);
+            };
+        } else {
+            // Останавливаем интервал, если чат закрыт
+            if (messageInterval) {
+                clearInterval(messageInterval);
+                setMessageInterval(null);
+            }
+            setMessages([]);
+        }
+    }, [activeChat]);
+
+    // Очищаем интервал при размонтировании компонента
+    useEffect(() => {
+        return () => {
+            if (messageInterval) {
+                clearInterval(messageInterval);
+            }
+        };
+    }, []);
+
+    // Загружаем профиль при монтировании
+    useEffect(() => {
+        const profile = JSON.parse(sessionStorage.getItem('user_profile') || {});
+        setUserProfile(profile);
+    }, []);
 
   async function viewStats() {
     if (!selectedPlayer) return;
@@ -126,7 +258,6 @@ function Game({ avatarUrl, gender }) {
       console.error('Ошибка доступа к микрофону:', err);
     }
   }
-
   useEffect(() => {
     console.log('[DEBUG] useEffect вызван');
     const mount = mountRef.current;
@@ -172,7 +303,7 @@ function Game({ avatarUrl, gender }) {
     let destinationMarker;
 
     const token = localStorage.getItem('token');
-    socketRef.current = io(`37.27.238.225:4000`, {
+    socketRef.current = io(`localhost:4000`, {
       auth: { token }
     });
     const socket = socketRef.current;
@@ -595,7 +726,6 @@ function Game({ avatarUrl, gender }) {
     }
 
     async function init() {
-      console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
 
       const aspect = window.innerWidth / window.innerHeight;
@@ -1315,7 +1445,7 @@ function Game({ avatarUrl, gender }) {
                       top: '20px',
                       left: '20px',
                       width: '25%',
-                      height: '100%',
+                      height: '5%',
                       padding: '10px',
                       borderRadius: '15px',
                       fontSize: '14px',
@@ -1353,23 +1483,56 @@ function Game({ avatarUrl, gender }) {
                       </button>
                   </div>
                   <div id="chatMessages" style={{
-                      height: '150px',
+                      height: '150px', // 15px 
                       overflowY: 'auto',
                       padding: '5px',
                       borderRadius: '10px',
                       color: 'white'
                   }}>
                   </div>
+              </div>
+          </DoubleTapWrapper>
+
+          <DoubleTapWrapper
+              onDoubleTap={() => setIsChatVisible(false)}
+              onTap={() => { if (!isChatVisible) setIsChatVisible(true); }}
+          >
+              <div
+                  style={{
+                      position: 'absolute',
+                      bottom: '20px',
+                      left: '20px',
+                      width: '25%',
+                      height: '5%',
+                      padding: '10px',
+                      borderRadius: '15px',
+                      fontSize: '14px',
+                      zIndex: 10,
+                      opacity: isChatVisible ? 1 : 0,
+                      transition: 'opacity 0.3s ease',
+                      // Разрешаем клики даже когда невидим
+                      pointerEvents: 'auto',
+                      // Прозрачная область для кликов когда скрыт
+                      cursor: isChatVisible ? 'default' : 'pointer'
+                  }}
+                  onDoubleClick={() => setIsChatVisible(false)}
+                  onClick={() => {
+                      if (!isChatVisible) {
+                          setIsChatVisible(true);
+                      }
+                  }
+                  }
+              >
                   <input
                       id="chatInput"
                       type="text"
                       placeholder="Введите сообщение..."
                       style={{
-                          width: '50%',
+                          width: '65%',  // 50
                           padding: '5px',
                           position: 'relative',
-                          left: '15px',
-                          top: '63%',
+                          left: '10px',
+                          bottom: '5%',
                           opacity: '50%'
                       }}
                       onKeyDown={(e) => {
@@ -1437,12 +1600,17 @@ function Game({ avatarUrl, gender }) {
                                   { src: "https://cdn-icons-png.flaticon.com/512/174/174855.png", alt: "YouTube", app: "YouTube" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail", app: "Gmail" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера", app: "Camera" },
+                                  { src: "https://cdn.iconscout.com/icon/free/png-512/free-telegram-logo-icon-download-in-svg-png-gif-file-formats--social-media-brand-pack-logos-icons-3073750.png?f=webp&w=512", alt: "Telegram", app: "Telegram" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/2111/2111398.png", alt: "Instagram" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732228.png", alt: "Google Drive" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png", alt: "Phone" },
+                                  {
+                                      src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png",
+                                      alt: "Phone",
+                                      app: "Phone"
+},
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png", alt: "Gallery" },
                                   { src: "https://cdn-icons-png.flaticon.com/512/1828/1828970.png", alt: "Music" },
@@ -1476,7 +1644,7 @@ function Game({ avatarUrl, gender }) {
                               left: 0,
                               padding: "1em",
                               width: "100%",
-                              height: "94%",
+                              height: "93.175%",
                               background: "#fff",
                               color: "#000",
                               overflowY: "auto",
@@ -1520,7 +1688,7 @@ function Game({ avatarUrl, gender }) {
                                           <li><b>От:</b> Izя — "Ты идешь сегодня?" ❤️</li>
                                       </ul>
                                   </div>
-                              )}
+                                  )}
                               {activeApp === "Camera" && (
                                   <div style={bodyStyle}>
                                       <header style={headerStyle}>
@@ -1548,6 +1716,128 @@ function Game({ avatarUrl, gender }) {
                                       </main>
                                   </div>
                               )}
+                                  {activeApp === "Telegram" && (
+                                      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                                          <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                              <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
+                                          </div>
+
+                                          <div style={{ width: "100%", height: "90%", display: "flex" }}>
+                                              <div style={{ width: "30%", height: "100%", borderRight: "1px solid #ddd", overflowY: "auto" }}>
+                                                  <div style={{ padding: "10px", fontWeight: "bold", borderBottom: "1px solid #ddd" }}>Contacts</div>
+                                                  <div id="user-list" style={{ overflowY: "auto" }}>
+                                                      {telegramContacts.length === 0 && (
+                                                          <div style={{ padding: 10, textAlign: "center" }}>
+                                                              {telegramContacts.length === 0
+                                                                  ? "Загрузка контактов..."
+                                                                  : "Контакты не найдены"}
+                                                          </div>
+                                                      )}
+                                                      {telegramContacts.map((user, index) => (
+                                                          <div
+                                                              key={index}
+                                                              style={{
+                                                                  padding: "10px",
+                                                                  borderBottom: "1px solid #eee",
+                                                                  cursor: "pointer",
+                                                                  display: "flex",
+                                                                  alignItems: "center"
+                                                              }}
+                                                              onClick={() => setActiveChat(user)}
+                                                          >
+                                                              <div>
+                                                                  {user.firstName} {user.lastName}
+                                                              </div>
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              </div>
+                                              <div style={{ width: "70%", height: "100%" }}>
+                                                  {activeChat && (
+                                                      <div style={{ padding: "10px" }}>
+                                                          <h3>Чат с {activeChat.firstName} {activeChat.lastName}</h3>
+                                                          {/* Контейнер сообщений с прокруткой */}
+                                                          <div
+                                                              id="chatContainer"
+                                                              style={{
+                                                                  flex: 1,
+                                                                  border: "1px solid #ddd",
+                                                                  padding: "10px",
+                                                                  overflowY: "auto",
+                                                                  marginBottom: "10px"
+                                                              }}
+                                                          >
+                                                              {messages.length === 0 ? (
+                                                                  <p style={{ textAlign: 'center', color: '#888' }}>Нет сообщений</p>
+                                                              ) : (
+                                                                  messages.map((msg) => (
+                                                                      <div
+                                                                          key={msg.id}
+                                                                          style={{
+                                                                              textAlign: msg.sender_id === userProfile?.id ? 'right' : 'left',
+                                                                              margin: '10px 0'
+                                                                          }}
+                                                                      >
+                                                                          <div style={{
+                                                                              display: 'inline-block',
+                                                                              padding: '8px 12px',
+                                                                              borderRadius: '12px',
+                                                                              background: msg.sender_id === userProfile?.id ? '#0084ff' : '#e5e5ea',
+                                                                              color: msg.sender_id === userProfile?.id ? '#fff' : '#000',
+                                                                              maxWidth: '80%'
+                                                                          }}>
+                                                                              {msg.message}
+                                                                          </div>
+                                                                          <div style={{
+                                                                              fontSize: '0.8em',
+                                                                              color: '#666',
+                                                                              marginTop: '4px'
+                                                                          }}>
+                                                                              {new Date(msg.created_at).toLocaleTimeString()}
+                                                                          </div>
+                                                                      </div>
+                                                                  ))
+                                                              )}
+                                                          </div>
+
+                                                          {/* Поле ввода и кнопка отправки */}
+                                                          <div style={{ display: 'flex' }}>
+                                                              <input
+                                                                  type="text"
+                                                                  value={newMessage}
+                                                                  onChange={(e) => setNewMessage(e.target.value)}
+                                                                  placeholder="Введите сообщение..."
+                                                                  style={{
+                                                                      flex: 1,
+                                                                      padding: '8px',
+                                                                      borderRadius: '20px',
+                                                                      border: '1px solid #ddd'
+                                                                  }}
+                                                                  onKeyDown={(e) => {
+                                                                      if (e.key === 'Enter') sendMessage();
+                                                                  }}
+                                                              />
+                                                              <button
+                                                                  onClick={sendMessage}
+                                                                  style={{
+                                                                      marginLeft: '8px',
+                                                                      padding: '8px 16px',
+                                                                      background: '#0084ff',
+                                                                      color: 'white',
+                                                                      border: 'none',
+                                                                      borderRadius: '20px',
+                                                                      cursor: 'pointer'
+                                                                  }}
+                                                              >
+                                                                  Отправить
+                                                              </button>
+                                                          </div>
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      </div>
+                                  )}
 
 
                           </div>

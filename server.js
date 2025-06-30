@@ -4,7 +4,7 @@ const db = require('./db');
 const path = require('path');
 const fs = require('fs');
 const app = express();
-
+const { virtualWorldPool } = require('./db1');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -17,12 +17,15 @@ const io = require('socket.io')(http, {
   }
 });
 
+let onlineUsers = {}; // Добавить для отслеживания онлайн пользователей
+
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error('No token'));
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    socket.userId = payload.id;
+      socket.userId = payload.id;
+    onlineUsers[socket.userId] = socket.id; // Добавить пользователя в онлайн
     next();
   } catch (err) {
     next(new Error('Invalid token'));
@@ -33,15 +36,15 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 
 function authenticate(req, res, next) {
-  const auth = req.headers.authorization?.split(' ');
-  try {
-    if (!auth || auth[0] !== 'Bearer') return res.status(401).send('No token');
-    const payload = jwt.verify(auth[1], process.env.JWT_SECRET);
-    req.user = payload;
-    next();
-  } catch {
-    res.status(401).send('Invalid token');
-  }
+    const auth = req.headers.authorization?.split(' ');
+    try {
+        if (!auth || auth[0] !== 'Bearer') return res.status(401).send('No token');
+        const payload = jwt.verify(auth[1], process.env.JWT_SECRET);
+        req.user = payload;
+        next();
+    } catch {
+        res.status(401).send('Invalid token');
+    }
 }
 
 app.use(express.static(path.join(__dirname, 'build')));
@@ -142,6 +145,44 @@ io.on('connection', socket => {
     }
   });
 
+    socket.on('sendMessage', async ({ receiverId, message }, callback) => {
+        try {
+            const senderId = socket.userId;
+
+            // Проверка получателя
+            const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+            if (receiverCheck.rows.length === 0) {
+                return callback({ error: 'Пользователь не найден' });
+            }
+
+            // Сохранение сообщения
+            const result = await virtualWorldPool.query(
+                `INSERT INTO messages (sender_id, receiver_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING id, created_at, is_read`,
+                [senderId, receiverId, message]
+            );
+
+            const newMessage = result.rows[0];
+            const receiverSocketId = onlineUsers[receiverId];
+
+            // Отправка получателю
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('newMessage', {
+                    id: newMessage.id,
+                    text: message,
+                    senderId,
+                    timestamp: newMessage.created_at,
+                    isRead: newMessage.is_read
+                });
+            }
+
+            callback({ success: true, message: newMessage });
+        } catch (err) {
+            callback({ error: 'Ошибка отправки сообщения' });
+        }
+    });
+
   // --- Чат ---
   socket.on('chatMessage', ({ message, name }) => {
     const cityId = socket.cityId;
@@ -208,7 +249,8 @@ io.on('connection', socket => {
   });
 
   // --- Отключение ---
-  socket.on('disconnect', async () => {
+    socket.on('disconnect', async () => {
+      delete onlineUsers[socket.userId];
     const cityId = socket.cityId;
     const player = playersByCity[cityId]?.[socket.id];
     if (player) {
@@ -224,6 +266,170 @@ io.on('connection', socket => {
       }
     }
   });
+});
+
+// Маршрут для получения списка пользователей
+// Получить список пользователей (кроме текущего)
+app.get('/api/users', authenticate, async (req, res) => {
+    try {
+        const { rows } = await db.query(`
+      SELECT id, first_name AS "firstName", last_name AS "lastName", avatar_url AS "avatarURL"
+      FROM users
+      WHERE id != $1
+    `, [req.user.id]);
+        res.json(rows);
+    } catch (e) {
+        console.error('Ошибка получения списка пользователей', e);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// Новый маршрут для получения сообщений с конкретным контактом
+app.get('/api/messages/:contactId', authenticate, async (req, res) => {
+    const userId = req.user.id;
+    const contactId = req.params.contactId;
+
+    try {
+        const messagesRes = await virtualWorldPool.query(
+            `SELECT * FROM messages
+             WHERE (sender_id = $1 AND receiver_id = $2)
+                OR (sender_id = $2 AND receiver_id = $1)
+             ORDER BY created_at ASC`,
+            [userId, contactId]
+        );
+
+        res.json(messagesRes.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка получения сообщений' });
+    }
+});
+
+app.post('/api/messages/send', authenticate, async (req, res) => {
+    const senderId = req.user.id;
+    const { receiverId, message } = req.body;
+
+    try {
+        // Проверка существования получателя в основной БД
+        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+        if (receiverCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Пользователь не найден' });
+        }
+
+        // Сохранение сообщения в virtual_world
+        const result = await virtualWorldPool.query(
+            `INSERT INTO messages (sender_id, receiver_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING id, created_at, is_read`,
+            [senderId, receiverId, message]
+        );
+
+        const newMessage = result.rows[0];
+
+        // Отправка через сокеты, если получатель онлайн
+        const receiverSocketId = onlineUsers[receiverId];
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('newMessage', {
+                id: newMessage.id,
+                text: message,
+                senderId,
+                timestamp: newMessage.created_at,
+                isRead: newMessage.is_read
+            });
+        }
+
+        res.status(201).json(newMessage);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка отправки сообщения' });
+    }
+});
+
+app.get('/api/messages', authenticate, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        // Получение сообщений из virtual_world
+        const messagesRes = await virtualWorldPool.query(
+            `SELECT * FROM messages
+       WHERE sender_id = $1 OR receiver_id = $1
+       ORDER BY created_at DESC`,
+            [userId]
+        );
+
+        if (messagesRes.rows.length === 0) {
+            return res.json([]);
+        }
+
+        // Сбор ID пользователей
+        const userIds = new Set();
+        messagesRes.rows.forEach(msg => {
+            userIds.add(msg.sender_id);
+            userIds.add(msg.receiver_id);
+        });
+
+        // Получение данных пользователей из основной БД
+        const usersRes = await db.query(
+            `SELECT id, first_name, last_name, avatar_url
+       FROM users
+       WHERE id = ANY($1)`,
+            [Array.from(userIds)]
+        );
+
+        // Создание карты пользователей
+        const userMap = {};
+        usersRes.rows.forEach(user => {
+            userMap[user.id] = {
+                name: `${user.first_name} ${user.last_name}`,
+                avatar: user.avatar_url
+            };
+        });
+
+        // Формирование ответа
+        const messages = messagesRes.rows.map(msg => ({
+            id: msg.id,
+            text: msg.message,
+            senderId: msg.sender_id,
+            receiverId: msg.receiver_id,
+            sender: userMap[msg.sender_id] || { name: 'Неизвестный', avatar: null },
+            receiver: userMap[msg.receiver_id] || { name: 'Неизвестный', avatar: null },
+            timestamp: msg.created_at,
+            isRead: msg.is_read
+        }));
+
+        res.json(messages);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка получения сообщений' });
+    }
+});
+
+app.patch('/api/messages/:id/read', authenticate, async (req, res) => {
+    const messageId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        // Проверка прав доступа
+        const checkRes = await virtualWorldPool.query(
+            `SELECT id FROM messages WHERE id = $1 AND receiver_id = $2`,
+            [messageId, userId]
+        );
+
+        if (checkRes.rows.length === 0) {
+            return res.status(404).json({ error: 'Сообщение не найдено или доступ запрещен' });
+        }
+
+        // Обновление статуса
+        await virtualWorldPool.query(
+            `UPDATE messages SET is_read = true WHERE id = $1`,
+            [messageId]
+        );
+
+        res.status(204).end();
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка обновления сообщения' });
+    }
 });
 
 app.get('/api/me', authenticate, async (req, res) => {
@@ -277,26 +483,26 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
-  console.log('register request:');
-  const { email, password, firstName, lastName, gender, age, city, avatarURL } = req.body;
-  const { rowCount } = await db.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
-  if (rowCount) return res.status(400).json({ error: 'Почта уже занята' });
+    console.log('register request:');
+    const { email, password, firstName, lastName, gender, age, city, avatarURL } = req.body;
+    const { rowCount } = await db.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
+    if (rowCount) return res.status(400).json({ error: 'Почта уже занята' });
 
-  const hash = await bcrypt.hash(password, 10);
-  const insertSQL = `
+    const hash = await bcrypt.hash(password, 10);
+    const insertSQL = `
     INSERT INTO users(email, password_hash, first_name, last_name, gender, age, city, avatar_url)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     RETURNING id, email, created_at
   `;
-  const result = await db.query(insertSQL, [
-    email, hash, firstName, lastName, gender, age, city, avatarURL
-  ]);
+    const result = await db.query(insertSQL, [
+        email, hash, firstName, lastName, gender, age, city, avatarURL
+    ]);
 
-  const user = result.rows[0];
-  const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
-    expiresIn: '12h'
-  });
-  res.json({ success: true, token });
+    const user = result.rows[0];
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
+        expiresIn: '12h'
+    });
+    res.json({ success: true, token });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -329,7 +535,8 @@ app.post('/api/login', async (req, res) => {
 
   res.json({
     token,
-    profile: {
+      profile: {
+        id: user.id,
       email,
       firstName: user.firstName,
       lastName: user.lastName,
