@@ -12,7 +12,13 @@ app.use(express.urlencoded({ extended: true }));
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
   cors: {
-    origin: 'http://localhost:4000',
+    origin: [
+      'http://localhost:4000',
+      'http://rltn.online',
+      'https://rltn.online',
+      'http://www.rltn.online',
+      'https://www.rltn.online'
+    ],
     methods: ['GET', 'POST']
   }
 });
@@ -75,6 +81,7 @@ io.on('connection', socket => {
       firstName: null,
       lastName: null
     };
+    players[socket.id] = playersByCity[cityId][socket.id];
     socket.cityId = cityId;
     socket.x = x;
     socket.z = z;
@@ -97,6 +104,7 @@ io.on('connection', socket => {
       lastName: data.lastName || ''
     });
     playersByCity[cityId][socket.id] = p;
+    players[socket.id] = p;
     socket.cityId = cityId;
     // Сообщаем только игрокам этого города
     for (const id in playersByCity[cityId]) {
@@ -217,7 +225,9 @@ io.on('connection', socket => {
   });
 
   socket.on('voiceChatToggle', ({ enabled }) => {
-    players[socket.id].voiceEnabled = enabled;
+    if (players[socket.id]) {
+      players[socket.id].voiceEnabled = enabled;
+    }
     socket.broadcast.emit('voiceChatStatus', { playerId: socket.id, enabled });
   });
 
@@ -243,6 +253,7 @@ io.on('connection', socket => {
       firstName: null,
       lastName: null
     };
+    players[socket.id] = playersByCity[cityId][socket.id];
     socket.cityId = cityId;
     // Отправляем новых игроков этого города
     socket.emit('currentPlayers', playersByCity[cityId]);
@@ -260,6 +271,7 @@ io.on('connection', socket => {
         [cityId, player.x, player.z, player.userId]
       );
       delete playersByCity[cityId][socket.id];
+      delete players[socket.id];
       // Сообщаем игрокам города о выходе
       for (const id in playersByCity[cityId]) {
         io.to(id).emit('playerDisconnected', socket.id);
@@ -442,7 +454,9 @@ app.get('/api/me', authenticate, async (req, res) => {
       gender,
       age,
       city,
-      avatar_url AS "avatarURL"
+      avatar_url AS "avatarURL",
+      balance,
+      satiery
     FROM users
     WHERE id = $1
   `, [userId]);
@@ -452,7 +466,15 @@ app.get('/api/me', authenticate, async (req, res) => {
 
 app.get('/api/players/:socketId', authenticate, async (req, res) => {
   const socketId = req.params.socketId;
-  const p = players[socketId];
+  let p = players[socketId];
+  if (!p) {
+    for (const city of Object.values(playersByCity)) {
+      if (city[socketId]) {
+        p = city[socketId];
+        break;
+      }
+    }
+  }
   if (!p) return res.status(404).json({ error: 'Player not found' });
 
   const dbId = p.userId;
@@ -473,6 +495,7 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
        sportiness,
        health_level  AS "healthLevel",
        stress_level  AS "stressLevel",
+       satiety,
        diseases
      FROM users
      WHERE id = $1
@@ -553,12 +576,13 @@ app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
   const cityId = req.params.cityId;
   try {
     const { rows } = await db.query(`
-      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z
+      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, organization_id
       FROM city_objects
       WHERE city_id = $1
     `, [cityId]);
     res.json(rows);
   } catch (e) {
+    console.error('Ошибка в /api/cities/:cityId/objects:', e);
     res.status(500).json({ error: 'Ошибка получения объектов города' });
   }
 });
@@ -574,6 +598,63 @@ app.get('/api/models', authenticate, async (req, res) => {
     res.status(500).json({ error: 'Ошибка чтения списка моделей' });
   }
 });
+
+// Получить организацию по objectId
+app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res) => {
+  const objectId = parseInt(req.params.objectId, 10);
+  try {
+    const { rows } = await db.query(`
+      SELECT 
+        o.id,
+        o.name,
+        os.menu,
+        os.work_hours
+      FROM city_objects AS co
+      JOIN organizations AS o
+        ON co.organization_id = o.id
+      JOIN organization_settings AS os
+        ON os.organization_id = o.id
+      WHERE co.id = $1
+    `, [objectId]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Организация не найдена для этого объекта' });
+    }
+
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('Ошибка в /api/organizations/by-object/:objectId:', e);
+    res.status(500).json({ error: 'Ошибка получения меню организации' });
+  }
+});
+
+
+// Покупка товара в организации
+app.post('/api/organizations/:id/purchase', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { itemKey } = req.body;
+  try {
+    const { rows } = await db.query(
+      'SELECT menu FROM organization_settings WHERE organization_id = $1',
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Организация не найдена' });
+    const menu = rows[0].menu || {};
+    const item = menu[itemKey];
+    if (!item) return res.status(400).json({ error: 'Товар не найден' });
+    const price = item.price || 0;
+    const satiety = item.satiety || 0;
+    const upd = await db.query(
+      'UPDATE users SET balance = balance - $1, satiety = LEAST(satiety + $2, 100) WHERE id = $3 RETURNING satiety',
+      [price, satiety, req.user.id]
+    );
+    res.json({ success: true, satiety: upd.rows[0].satiety });
+  } catch (e) {
+    console.error('purchase error', e);
+    res.status(500).json({ error: 'Ошибка покупки' });
+  }
+});
+
 
 // Сохранить текущую карту в текстовый файл
 app.post('/api/save-map', authenticate, async (req, res) => {
