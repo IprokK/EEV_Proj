@@ -752,7 +752,10 @@ function Game({ avatarUrl, gender }) {
               scene.add(model);
               model.updateMatrixWorld();
               const boundingBox = new THREE.Box3().setFromObject(model);
-              obstacles.push({ mesh: model, box: boundingBox });
+              const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
+              if (isCollidable) {
+                obstacles.push({ mesh: model, box: boundingBox });
+              }
 
               loadedModelsCount++;
               console.log(`[DEBUG] Модель ${obj.name} успешно загружена (${loadedModelsCount}/${totalModelsToLoad})`);

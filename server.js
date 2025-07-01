@@ -369,7 +369,8 @@ app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
   const cityId = req.params.cityId;
   try {
     const { rows } = await db.query(`
-      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, organization_id
+      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, organization_id,
+             COALESCE(collidable, true) AS collidable
       FROM city_objects
       WHERE city_id = $1
     `, [cityId]);
