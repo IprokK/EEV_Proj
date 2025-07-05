@@ -26,7 +26,11 @@ function Game({ avatarUrl, gender }) {
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
   const localStream = useRef(null);
-  const voiceIcons = useRef({});
+    const voiceIcons = useRef({});
+
+    const [currentDialog, setCurrentDialog] = useState(null);
+    const [dialogIndex, setDialogIndex] = useState(0);
+    const [showDialog, setShowDialog] = useState(false);
 
   //Телефон
     const [isIframeOpen, setIsIframeOpen] = useState(false);
@@ -40,6 +44,37 @@ function Game({ avatarUrl, gender }) {
         setAppsHidden(true);
         setActiveApp(appName);
     };
+
+
+    const loadDialog = async (npcId) => {
+        try {
+            const response = await fetch(`/dialogs/${npcId}.json`);
+            const data = await response.json();
+            setCurrentDialog(data);
+            setDialogIndex(0);
+            setShowDialog(true);
+        } catch (error) {
+            console.error('Ошибка загрузки диалога:', error);
+        }
+    };
+
+    const handleAnswerSelect = (answer) => {
+        if (answer.end) {
+            setShowDialog(false); // Завершаем диалог если есть флаг end
+        } else if (answer.next !== undefined) {
+            // Находим индекс следующего узла по id
+            const nextIndex = currentDialog.dialog.findIndex(node => node.id === answer.next);
+            if (nextIndex !== -1) {
+                setDialogIndex(nextIndex);
+            } else {
+                console.error('Диалоговый узел не найден:', answer.next);
+                setShowDialog(false);
+            }
+        } else {
+            setShowDialog(false);
+        }
+    };
+
 
     const closeApp = () => {
         setAppsHidden(false);
@@ -204,14 +239,14 @@ function Game({ avatarUrl, gender }) {
     const moveSpeed = 5;
     const clock = new THREE.Clock();
     const keys = {};
-
+      let npcMeshes = [];
     const territorySize = 500;
     const boundary = territorySize / 2;
     const gridSize = 300;
     const nodeSize = territorySize / gridSize;
 
     let pathfinderGrid;
-    let currentPath = [];
+    let currentPath = []; 
     let pathIndex = 0;
     let groundPlane;
     let destinationMarker;
@@ -383,7 +418,7 @@ function Game({ avatarUrl, gender }) {
         console.error('Ошибка создания WebRTC предложения:', err);
       }
     }
-
+     
     function cleanupVoiceConnection(peerId) {
       if (voiceConnections.current[peerId]) {
         const conn = voiceConnections.current[peerId];
@@ -659,7 +694,6 @@ function Game({ avatarUrl, gender }) {
     async function init() {
       console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
-
       const aspect = window.innerWidth / window.innerHeight;
       const d = 200;
       camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
@@ -703,6 +737,47 @@ function Game({ avatarUrl, gender }) {
         map: baseTexture,
       });
 
+
+        const npcMixersArray = [];
+        // Добавление персонажей 
+        const npcData = [
+            { id: 'bartender', model: '/models/npc/bartender.glb', position: [30, 0, 15] },
+            { id: 'guard', model: '/models/npc/guard.glb', position: [10, 0, 40] },
+            { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [20, 0, 10] }
+        ];
+        for (const npc of npcData) {
+            try {
+                const gltf = await gltfLoader.loadAsync(npc.model);
+                const model = gltf.scene;
+                model.position.set(...npc.position);
+                model.userData.npcId = npc.id;
+                model.userData.isNpc = true;
+
+                // Добавляем метку с именем
+                const label = createPlayerLabel(npc.id === 'bartender' ? 'Бармен' : 'Стражник');
+                label.position.set(0, 2.2, 0);
+                model.add(label);
+                model.rotateY(Math.PI); // Развернуть персонажа 
+                scene.add(model);
+                npcMeshes.push(model); // Правильное добавление в массив
+
+                if (npc.id == 'Adventurer') {
+                    const clock = new THREE.Clock();
+                    let mixers;
+                    const tick = () => {
+                        console.log(tick);
+                        model.rotation.y += 0.01;
+                        renderer.render(scene, camera);
+                        window.requestAnimationFrame(tick);
+                    }
+                    tick();
+                }
+
+            } catch (error) {
+                console.error(`Ошибка загрузки NPC ${npc.id}:`, error);
+            }
+
+        }
       // Загрузка объектов города из базы данных
       let loadedModelsCount = 0;
       let cityObjects = [];
@@ -899,76 +974,93 @@ function Game({ avatarUrl, gender }) {
       });
     }
 
-    function onDocumentMouseDown(event) {
-      if (!player) return;
-      event.preventDefault();
+      // В функции onDocumentMouseDown заменяем существующий код на:
+      function onDocumentMouseDown(event) {
+          if (!player) return;
+          event.preventDefault();
 
-      const rect = renderer.domElement.getBoundingClientRect();
-      const mouse = new THREE.Vector2(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1
-      );
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, camera);
+          const rect = renderer.domElement.getBoundingClientRect();
+          const mouse = new THREE.Vector2(
+              ((event.clientX - rect.left) / rect.width) * 2 - 1,
+              -((event.clientY - rect.top) / rect.height) * 2 + 1
+          );
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(mouse, camera);
 
-      const houseIntersects = raycaster.intersectObjects(
-        obstacles.map(o => o.mesh), true
-      );
-      if (houseIntersects.length) {
-        const mesh = houseIntersects[0].object;
-        const root = mesh.parent;
-        const { id: objectId, type, rent, tax, organizationId } = root.userData;
-        if (objectId && organizationId) {
-          // Вызываем меню по правильному ID объекта
-          openOrganizationMenu(objectId);
-        } else {
-          // Простое окно информации об аренде/налоге
-          setSelectedHouse({ type, rent, tax });
-        }
-        return;
+          // 1. Проверка NPC
+          const npcIntersects = raycaster.intersectObjects(npcMeshes, true);
+          if (npcIntersects.length) {
+              const mesh = npcIntersects[0].object;
+              let npcRoot = mesh;
+              while (npcRoot.parent && !npcRoot.userData.isNpc) {
+                  npcRoot = npcRoot.parent;
+              }
+
+              if (npcRoot.userData.npcId) {
+                  loadDialog(npcRoot.userData.npcId);
+                  return;
+              }
+          }
+
+          // 2. Проверка домов/объектов
+          const houseIntersects = raycaster.intersectObjects(
+              obstacles.map(o => o.mesh), true
+          );
+          if (houseIntersects.length) {
+              const mesh = houseIntersects[0].object;
+              const root = mesh.parent;
+              const { id: objectId, type, rent, tax, organizationId } = root.userData;
+              if (objectId && organizationId) {
+                  openOrganizationMenu(objectId);
+              } else {
+                  setSelectedHouse({ type, rent, tax });
+              }
+              return;
+          }
+
+          // 3. Проверка игроков
+          const remoteModels = Object.values(remotePlayers).map(r => r.model);
+          const playerIntersects = raycaster.intersectObjects(remoteModels, true);
+          if (playerIntersects.length) {
+              let mesh = playerIntersects[0].object;
+              while (mesh && !remoteModels.includes(mesh)) mesh = mesh.parent;
+              const entry = Object.entries(remotePlayers).find(([, r]) => r.model === mesh);
+              if (entry) {
+                  const [id, r] = entry;
+                  setSelectedPlayer({ socketId: id, firstName: r.firstName, lastName: r.lastName });
+                  setPlayerStats(null);
+                  return;
+              }
+          }
+
+          // Сброс выделений
+          setSelectedHouse(null);
+          setOrgMenu(null);
+          setSelectedPlayer(null);
+
+          // 4. Проверка земли
+          const groundIntersects = raycaster.intersectObject(groundPlane);
+          if (groundIntersects.length === 0) {
+              console.log("Клик не попал по плоскости");
+              return;
+          }
+
+          destination = groundIntersects[0].point.clone();
+          destination.y = player.position.y;
+
+          const newPath = computePath(player.position, destination);
+          if (newPath.length === 0) {
+              console.warn("Путь не найден");
+              return;
+          }
+          currentPath = newPath;
+          pathIndex = 0;
+
+          if (destinationMarker) {
+              destinationMarker.position.copy(destination);
+              destinationMarker.visible = true;
+          }
       }
-
-      setSelectedHouse(null);
-      setOrgMenu(null);
-
-      const remoteModels = Object.values(remotePlayers).map(r => r.model);
-      const playerIntersects = raycaster.intersectObjects(remoteModels, true);
-      if (playerIntersects.length) {
-        let mesh = playerIntersects[0].object;
-        while (mesh && !remoteModels.includes(mesh)) mesh = mesh.parent;
-        const entry = Object.entries(remotePlayers).find(([, r]) => r.model === mesh);
-        if (entry) {
-          const [id, r] = entry;
-          setSelectedPlayer({ socketId: id, firstName: r.firstName, lastName: r.lastName });
-          setPlayerStats(null);
-          return;
-        }
-      }
-
-      const intersects = raycaster.intersectObject(groundPlane);
-      if (intersects.length === 0) {
-        console.log("Клик не попал по плоскости");
-        return;
-      }
-
-      destination = intersects[0].point.clone();
-      destination.y = player.position.y;
-
-      const newPath = computePath(player.position, destination);
-      if (newPath.length === 0) {
-        console.warn("Путь не найден");
-        return;
-      }
-      currentPath = newPath;
-      pathIndex = 0;
-
-      console.log('computed path length:', currentPath.length);
-
-      if (destinationMarker) {
-        destinationMarker.position.copy(destination);
-        destinationMarker.visible = true;
-      }
-    }
 
     function onKeyDown(event) {
       keys[event.key] = true;
@@ -1154,7 +1246,7 @@ function Game({ avatarUrl, gender }) {
       updateDestinationMovement(delta);
       if (mixer) mixer.update(delta);
       updateTransparency();
-      updateCameraFollow();
+        updateCameraFollow();
       for (let id in remotePlayers) {
         const r = remotePlayers[id];
         if (r.targetPosition) {
@@ -1333,8 +1425,109 @@ function Game({ avatarUrl, gender }) {
                     style={btnStyle}>Статистика</button>
           </div>
         </div>
-      )}
+          )}
+          {/* Визуализация диалога */ }
+          {showDialog && currentDialog && (
+              <div style={{
+                  position: 'fixed',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(0,0,0,0.85)',
+                  color: 'white',
+                  padding: '20px',
+                  borderRadius: '10px',
+                  zIndex: 3000,
+                  minWidth: '300px',
+                  border: '2px solid #555',
+                  display: 'flex',
+                  flexDirection: 'column'
+              }}>
+                  <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '15px',
+                      borderBottom: '1px solid #444',
+                      paddingBottom: '10px'
+                  }}>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                          {currentDialog.avatar && (
+                              <img
+                                  src={currentDialog.avatar}
+                                  alt={currentDialog.name}
+                                  style={{
+                                      width: '50px',
+                                      height: '50px',
+                                      borderRadius: '50%',
+                                      marginRight: '10px',
+                                      objectFit: 'cover'
+                                  }}
+                              />
+                          )}
+                          <h3 style={{ margin: 0 }}>{currentDialog.name}</h3>
+                      </div>
+                      <button
+                          onClick={() => setShowDialog(false)}
+                          style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'white',
+                              fontSize: '20px',
+                              cursor: 'pointer'
+                          }}
+                      >
+                          ✕
+                      </button>
+                  </div>
 
+                  <p style={{ marginBottom: '20px', minHeight: '60px' }}>
+                      {currentDialog.dialog[dialogIndex].text}
+                  </p>
+                  {currentDialog.dialog[dialogIndex].answers?.length > 0 ? (
+                      <div style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                          marginBottom: '20px'
+                      }}>
+                          {currentDialog.dialog[dialogIndex].answers.map((answer, idx) => (
+                              <button
+                                  key={idx}
+                                  onClick={() => handleAnswerSelect(answer)}
+                                  style={{
+                                      padding: '8px 16px',
+                                      background: '#3a5f8d',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      textAlign: 'left'
+                                  }}
+                              >
+                                  {answer.text}
+                              </button>
+                          ))}
+                      </div>
+                  ) : (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                          <button
+                              onClick={() => setShowDialog(false)}
+                              style={{
+                                  padding: '8px 16px',
+                                  background: '#4a76a8',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer'
+                              }}
+                          >
+                              Закрыть
+                          </button>
+                      </div>
+                  )}
+              </div>
+          )}
       {selectedPlayer && (
         <div
           ref={statsRef}
