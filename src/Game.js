@@ -31,6 +31,8 @@ function Game({ avatarUrl, gender }) {
     const [currentDialog, setCurrentDialog] = useState(null);
     const [dialogIndex, setDialogIndex] = useState(0);
     const [showDialog, setShowDialog] = useState(false);
+    const [formData, setFormData] = useState({});
+    const [currentForm, setCurrentForm] = useState(null);
 
   //Телефон
     const [isIframeOpen, setIsIframeOpen] = useState(false);
@@ -68,9 +70,17 @@ function Game({ avatarUrl, gender }) {
 
     const handleAnswerSelect = (answer) => {
         if (answer.end) {
-            setShowDialog(false); // Завершаем диалог если есть флаг end
+            setShowDialog(false);
         } else if (answer.next !== undefined) {
-            // Находим индекс следующего узла по id
+            // Если следующий узел - форма
+            if (typeof answer.next === 'string' && answer.next.startsWith('form_')) {
+                const nextNode = currentDialog.dialog.find(node => node.id === answer.next);
+                if (nextNode && nextNode.type === 'form') {
+                    setCurrentForm(nextNode);
+                    return;
+                }
+            }
+
             const nextIndex = currentDialog.dialog.findIndex(node => node.id === answer.next);
             if (nextIndex !== -1) {
                 setDialogIndex(nextIndex);
@@ -81,6 +91,30 @@ function Game({ avatarUrl, gender }) {
         } else {
             setShowDialog(false);
         }
+    };
+    // Добавьте эту функцию для обработки отправки формы
+    const handleFormSubmit = (e) => {
+        e.preventDefault();
+        if (currentForm.next) {
+            const nextIndex = currentDialog.dialog.findIndex(node => node.id === currentForm.next);
+            if (nextIndex !== -1) {
+                setDialogIndex(nextIndex);
+                setCurrentForm(null);
+
+                // Здесь можно отправить данные формы на сервер
+                console.log('Отправленные данные:', formData);
+                // Например: socketRef.current?.emit('dialogFormSubmit', formData);
+            }
+        }
+    };
+
+    // Добавьте эту функцию для обработки изменения полей формы
+    const handleFormChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({
+            ...prev,
+            [name]: value
+        }));
     };
 
 
@@ -1562,7 +1596,6 @@ function movePlayerToInterior(interiorId) {
           </div>
         </div>
           )}
-          {/* Визуализация диалога */ }
           {showDialog && currentDialog && (
               <div style={{
                   position: 'fixed',
@@ -1617,50 +1650,112 @@ function movePlayerToInterior(interiorId) {
                       </button>
                   </div>
 
-                  <p style={{ marginBottom: '20px', minHeight: '60px' }}>
-                      {currentDialog.dialog[dialogIndex].text}
-                  </p>
-                  {currentDialog.dialog[dialogIndex].answers?.length > 0 ? (
-                      <div style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '8px',
-                          marginBottom: '20px'
-                      }}>
-                          {currentDialog.dialog[dialogIndex].answers.map((answer, idx) => (
-                              <button
-                                  key={idx}
-                                  onClick={() => handleAnswerSelect(answer)}
-                                  style={{
-                                      padding: '8px 16px',
-                                      background: '#3a5f8d',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      textAlign: 'left'
-                                  }}
-                              >
-                                  {answer.text}
-                              </button>
+                  {currentForm ? (
+                      <form onSubmit={handleFormSubmit}>
+                          <h4 style={{ marginTop: 0 }}>{currentForm.title}</h4>
+                          {currentForm.fields.map((field, idx) => (
+                              <div key={idx} style={{ marginBottom: '15px' }}>
+                                  <label style={{ display: 'block', marginBottom: '5px' }}>
+                                      {field.label}
+                                  </label>
+                                  {field.type === 'textarea' ? (
+                                      <textarea
+                                          name={field.name}
+                                          placeholder={field.placeholder}
+                                          required={field.required}
+                                          onChange={handleFormChange}
+                                          style={{
+                                              width: '100%',
+                                              minHeight: '80px',
+                                              padding: '8px',
+                                              borderRadius: '4px',
+                                              background: 'rgba(255,255,255,0.1)',
+                                              border: '1px solid #555',
+                                              color: 'white'
+                                          }}
+                                      />
+                                  ) : (
+                                      <input
+                                          type={field.type}
+                                          name={field.name}
+                                          placeholder={field.placeholder}
+                                          required={field.required}
+                                          onChange={handleFormChange}
+                                          style={{
+                                              width: '100%',
+                                              padding: '8px',
+                                              borderRadius: '4px',
+                                              background: 'rgba(255,255,255,0.1)',
+                                              border: '1px solid #555',
+                                              color: 'white'
+                                          }}
+                                      />
+                                  )}
+                              </div>
                           ))}
-                      </div>
-                  ) : (
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                           <button
-                              onClick={() => setShowDialog(false)}
+                              type="submit"
                               style={{
                                   padding: '8px 16px',
-                                  background: '#4a76a8',
+                                  background: '#3a5f8d',
                                   color: 'white',
                                   border: 'none',
                                   borderRadius: '4px',
-                                  cursor: 'pointer'
+                                  cursor: 'pointer',
+                                  width: '100%'
                               }}
                           >
-                              Закрыть
+                              {currentForm.submit_text || 'Отправить'}
                           </button>
-                      </div>
+                      </form>
+                  ) : (
+                      <>
+                          <p style={{ marginBottom: '20px', minHeight: '60px' }}>
+                              {currentDialog.dialog[dialogIndex].text}
+                          </p>
+                          {currentDialog.dialog[dialogIndex].answers?.length > 0 ? (
+                              <div style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '8px',
+                                  marginBottom: '20px'
+                              }}>
+                                  {currentDialog.dialog[dialogIndex].answers.map((answer, idx) => (
+                                      <button
+                                          key={idx}
+                                          onClick={() => handleAnswerSelect(answer)}
+                                          style={{
+                                              padding: '8px 16px',
+                                              background: '#3a5f8d',
+                                              color: 'white',
+                                              border: 'none',
+                                              borderRadius: '4px',
+                                              cursor: 'pointer',
+                                              textAlign: 'left'
+                                          }}
+                                      >
+                                          {answer.text}
+                                      </button>
+                                  ))}
+                              </div>
+                          ) : (
+                              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                  <button
+                                      onClick={() => setShowDialog(false)}
+                                      style={{
+                                          padding: '8px 16px',
+                                          background: '#4a76a8',
+                                          color: 'white',
+                                          border: 'none',
+                                          borderRadius: '4px',
+                                          cursor: 'pointer'
+                                      }}
+                                  >
+                                      Закрыть
+                                  </button>
+                              </div>
+                          )}
+                      </>
                   )}
               </div>
           )}
