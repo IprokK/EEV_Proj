@@ -40,6 +40,14 @@ function Game({ avatarUrl, gender }) {
     const [activeApp, setActiveApp] = useState(null);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
+    const [isInInterior, setIsInInterior] = useState(false);
+    const sceneRef = useRef(null);
+    const playerRef = useRef(null);
+    const cityMeshesRef = useRef([]);
+    const groundRef = useRef(null);
+    const interiorGroupRef = useRef(null);
+    const savedPositionRef = useRef(new THREE.Vector3());
+    const remotePlayersRef = useRef({});
     const handleAppClick = (appName) => {
         setAppsHidden(true);
         setActiveApp(appName);
@@ -175,20 +183,62 @@ function Game({ avatarUrl, gender }) {
     }
   }
 
+  async function onObjectClick(mesh) {
+  const objectId = mesh.userData.id;        // <-- USER DATA ID из city_objects
+  const token = localStorage.getItem('token');
+
+  try {
+    const resp = await fetch(
+      `/api/city_objects/${objectId}/interior`,  // <-- обязательно "/interior"
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        cache: 'no-cache'
+      }
+    );
+    if (!resp.ok) {
+      console.warn(`Для объекта ${objectId} не задан interior_id (status ${resp.status})`);
+      return;
+    }
+    const { interiorId } = await resp.json();
+    if (!interiorId) return;
+
+    console.log(`Переходим в интерьер ${interiorId} из объекта ${objectId}`);
+    movePlayerToInterior(interiorId);
+  } catch (err) {
+    console.error(`Ошибка при запросе interior_id для объекта ${objectId}:`, err);
+  }
+}
+
+
   async function openOrganizationMenu(objectId) {
     const token = localStorage.getItem('token');
-    const res = await fetch(
-      `/api/organizations/by-object/${objectId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (res.ok) {
+    try {
+      const res = await fetch(
+        `/api/organizations/by-object/${objectId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        throw new Error(`status ${res.status}`);
+      }
       const data = await res.json();
       setOrgMenu(data);
       setSelectedHouse(null);
-    } else {
-      console.error('Не удалось загрузить меню организации для объекта', objectId);
+    } catch (e) {
+      console.error(
+        'Не удалось загрузить меню организации для объекта',
+        objectId,
+        e
+      )
+      alert('Ошибка загрузки меню организации');
     }
   }
+
+
+function movePlayerToInterior(interiorId) {
+  // тут ваша логика загрузки сцены/камеры
+  Game.loadInteriorScene(interiorId);
+}
 
   async function buyItem(key) {
     if (!orgMenu) return;
@@ -205,6 +255,68 @@ function Game({ avatarUrl, gender }) {
       profile.satiety = data.satiety;
       sessionStorage.setItem('user_profile', JSON.stringify(profile));
     }
+  }
+  function toggleWorldVisibility(visible) {
+    groundRef.current && (groundRef.current.visible = visible);
+    cityMeshesRef.current.forEach(m => m.visible = visible);
+    Object.values(remotePlayersRef.current).forEach(p => {
+      if (p.model) p.model.visible = visible;
+    });
+  }
+
+  function createInterior() {
+    const group = new THREE.Group();
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    group.add(floor);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
+    const wallGeo = new THREE.PlaneGeometry(20, 10);
+    const back = new THREE.Mesh(wallGeo, wallMat);
+    back.position.set(0, 5, -10);
+    group.add(back);
+    const front = back.clone();
+    front.position.set(0, 5, 10);
+    front.rotation.y = Math.PI;
+    group.add(front);
+    const left = back.clone();
+    left.position.set(-10, 5, 0);
+    left.rotation.y = Math.PI / 2;
+    group.add(left);
+    const right = back.clone();
+    right.position.set(10, 5, 0);
+    right.rotation.y = -Math.PI / 2;
+    group.add(right);
+
+    const light = new THREE.PointLight(0xffffff, 1);
+    light.position.set(0, 5, 0);
+    group.add(light);
+
+    return group;
+  }
+
+  function enterHouse(house) {
+    if (!house || !sceneRef.current || !playerRef.current) return;
+    const id = parseInt(house.id, 10);
+    if (id === 9) {
+      savedPositionRef.current.copy(playerRef.current.position);
+      toggleWorldVisibility(false);
+      interiorGroupRef.current = createInterior();
+      sceneRef.current.add(interiorGroupRef.current);
+      playerRef.current.position.set(0, 0, 0);
+      setSelectedHouse(null);
+      setIsInInterior(true);
+    }
+  }
+
+  function exitInterior() {
+    if (!isInInterior || !playerRef.current) return;
+    sceneRef.current.remove(interiorGroupRef.current);
+    interiorGroupRef.current = null;
+    toggleWorldVisibility(true);
+    playerRef.current.position.copy(savedPositionRef.current);
+    setIsInInterior(false);
   }
 
   useEffect(() => {
@@ -233,7 +345,7 @@ function Game({ avatarUrl, gender }) {
     let scene, camera, renderer;
     let player, mixer;
     let idleAction, walkAction, currentAction;
-    let remotePlayers = {};
+    let remotePlayers = remotePlayersRef.current;
     let obstacles = [];
     let destination = null;
     const moveSpeed = 5;
@@ -694,6 +806,7 @@ function Game({ avatarUrl, gender }) {
     async function init() {
       console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
+      sceneRef.current = scene;
       const aspect = window.innerWidth / window.innerHeight;
       const d = 200;
       camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
@@ -715,6 +828,7 @@ function Game({ avatarUrl, gender }) {
       groundPlane = new THREE.Mesh(planeGeometry, planeMaterial);
       groundPlane.rotation.x = -Math.PI / 2;
       scene.add(groundPlane);
+      groundRef.current = groundPlane;
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
       scene.add(ambientLight);
@@ -760,12 +874,12 @@ function Game({ avatarUrl, gender }) {
                 model.rotateY(Math.PI); // Развернуть персонажа 
                 scene.add(model);
                 npcMeshes.push(model); // Правильное добавление в массив
+                cityMeshesRef.current.push(model);
 
                 if (npc.id == 'Adventurer') {
                     const clock = new THREE.Clock();
                     let mixers;
                     const tick = () => {
-                        console.log(tick);
                         model.rotation.y += 0.01;
                         renderer.render(scene, camera);
                         window.requestAnimationFrame(tick);
@@ -825,6 +939,7 @@ function Game({ avatarUrl, gender }) {
                 }
               });
               scene.add(model);
+              cityMeshesRef.current.push(model);
               model.updateMatrixWorld();
               const boundingBox = new THREE.Box3().setFromObject(model);
               const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
@@ -857,6 +972,7 @@ function Game({ avatarUrl, gender }) {
         const gltf = await loadPlayerModel(avatarUrl);
         player = gltf.scene;
         scene.add(player);
+        playerRef.current = player;
         player.scale.set(1, 1, 1);
         player.position.set(0, 0, 0);
 
@@ -975,48 +1091,39 @@ function Game({ avatarUrl, gender }) {
     }
 
       // В функции onDocumentMouseDown заменяем существующий код на:
-      function onDocumentMouseDown(event) {
-          if (!player) return;
-          event.preventDefault();
+      async function onDocumentMouseDown(event) {
+        if (!player) return;
+        event.preventDefault();
 
-          const rect = renderer.domElement.getBoundingClientRect();
-          const mouse = new THREE.Vector2(
-              ((event.clientX - rect.left) / rect.width) * 2 - 1,
-              -((event.clientY - rect.top) / rect.height) * 2 + 1
-          );
-          const raycaster = new THREE.Raycaster();
-          raycaster.setFromCamera(mouse, camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
 
-          // 1. Проверка NPC
-          const npcIntersects = raycaster.intersectObjects(npcMeshes, true);
-          if (npcIntersects.length) {
-              const mesh = npcIntersects[0].object;
-              let npcRoot = mesh;
-              while (npcRoot.parent && !npcRoot.userData.isNpc) {
-                  npcRoot = npcRoot.parent;
-              }
-
-              if (npcRoot.userData.npcId) {
-                  loadDialog(npcRoot.userData.npcId);
-                  return;
-              }
+        // NPC
+        const npcHit = raycaster.intersectObjects(npcMeshes, true);
+        if (npcHit.length) {
+          let root = npcHit[0].object;
+          while (root.parent && !root.userData.isNpc) root = root.parent;
+          if (root.userData.npcId) {
+            loadDialog(root.userData.npcId);
+            return;
           }
+        }
 
-          // 2. Проверка домов/объектов
-          const houseIntersects = raycaster.intersectObjects(
-              obstacles.map(o => o.mesh), true
-          );
-          if (houseIntersects.length) {
-              const mesh = houseIntersects[0].object;
-              const root = mesh.parent;
-              const { id: objectId, type, rent, tax, organizationId } = root.userData;
-              if (objectId && organizationId) {
-                  openOrganizationMenu(objectId);
-              } else {
-                  setSelectedHouse({ type, rent, tax });
-              }
-              return;
+        // Здания/объекты
+        const houseHit = raycaster.intersectObjects(obstacles.map(o => o.mesh), true);
+        if (houseHit.length) {
+          let obj = houseHit[0].object;
+          while (obj && !obj.userData.id) obj = obj.parent;
+          if (obj && obj.userData.id) {
+            await onObjectClick(obj);   // сразу телепорт в интерьер
+            return;
           }
+        }
 
           // 3. Проверка игроков
           const remoteModels = Object.values(remotePlayers).map(r => r.model);
@@ -1288,6 +1395,10 @@ function Game({ avatarUrl, gender }) {
       Object.keys(voiceConnections.current).forEach(peerId => {
         cleanupVoiceConnection(peerId);
       });
+      if (interiorGroupRef.current) {
+        scene.remove(interiorGroupRef.current);
+        interiorGroupRef.current = null;
+      }
     };
   }, []);
 
@@ -1354,6 +1465,28 @@ function Game({ avatarUrl, gender }) {
         Карта мира
       </button>
 
+      {isInInterior && (
+        <button
+          style={{
+            position: 'absolute',
+            top: 60,
+            right: 20,
+            zIndex: 1000,
+            padding: '10px 18px',
+            background: '#0047ab',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '18px',
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+          }}
+          onClick={exitInterior}
+        >
+          Выйти
+        </button>
+      )}
+
       {/* Модальное окно выбора города */}
       {showWorldMap && (
         <div style={{
@@ -1412,6 +1545,9 @@ function Game({ avatarUrl, gender }) {
           borderRadius: 8, minWidth: 220
         }}>
           <h3 style={{ margin: 0, marginBottom: 8 }}>🏠 {selectedHouse.type}</h3>
+          <p style={{ margin: '4px 0' }}>
+            <b>ID:</b> {selectedHouse.id}
+          </p>
           <p style={{ margin: '4px 0' }}>
             <b>Стоимость аренды:</b> {selectedHouse.rent}
           </p>

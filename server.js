@@ -391,6 +391,36 @@ app.get('/api/models', authenticate, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Ошибка чтения списка моделей' });
   }
+
+  app.get(
+  '/api/city_objects/:objectId/interior',
+  authenticate,
+  async (req, res) => {
+    const objectId = parseInt(req.params.objectId, 10);
+    try {
+      const { rows } = await db.query(
+        `SELECT interior_id
+           FROM city_objects
+          WHERE id = $1`,
+        [objectId]
+      );
+      if (rows.length === 0) {
+        return res
+          .status(404)
+          .json({ error: 'Объект с таким id не найден' });
+      }
+      res.json({ interiorId: rows[0].interior_id });
+    } catch (e) {
+      console.error(
+        'Ошибка в /api/city_objects/:objectId/interior',
+        e
+      );
+      res
+        .status(500)
+        .json({ error: 'Не удалось получить interior_id' });
+    }
+  }
+);
 });
 
 // Получить организацию по objectId
