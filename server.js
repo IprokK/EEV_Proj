@@ -51,6 +51,10 @@ function authenticate(req, res, next) {
 }
 
 app.use(express.static(path.join(__dirname, 'build')));
+app.use(
+  '/models',
+  express.static(path.join(__dirname, 'public', 'models'))
+);
 
 let players = {};
 
@@ -391,37 +395,61 @@ app.get('/api/models', authenticate, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Ошибка чтения списка моделей' });
   }
+});
 
-  app.get(
+// Регистрируем маршрут на старте приложения:
+app.get(
   '/api/city_objects/:objectId/interior',
   authenticate,
   async (req, res) => {
     const objectId = parseInt(req.params.objectId, 10);
     try {
       const { rows } = await db.query(
-        `SELECT interior_id
-           FROM city_objects
-          WHERE id = $1`,
+        'SELECT interior_id FROM city_objects WHERE id = $1',
         [objectId]
       );
       if (rows.length === 0) {
-        return res
-          .status(404)
-          .json({ error: 'Объект с таким id не найден' });
+        return res.status(404).json({ error: 'Объект с таким id не найден' });
       }
       res.json({ interiorId: rows[0].interior_id });
     } catch (e) {
-      console.error(
-        'Ошибка в /api/city_objects/:objectId/interior',
-        e
-      );
-      res
-        .status(500)
-        .json({ error: 'Не удалось получить interior_id' });
+      console.error('Ошибка в /api/city_objects/:objectId/interior', e);
+      res.status(500).json({ error: 'Не удалось получить interior_id' });
     }
   }
 );
+
+// server.js, после маршрута /api/city_objects/:objectId/interior
+app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) => {
+  const interiorId = parseInt(req.params.interiorId, 10);
+  try {
+    // получаем контейнер-glb
+    const interior = (await db.query(
+      'SELECT glb_filename FROM interiors WHERE id = $1',
+      [interiorId]
+    )).rows[0];
+    if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
+
+    // получаем все объекты с model_url
+    const objects = (await db.query(
+      `SELECT type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
+         FROM interior_objects
+        WHERE interior_id = $1
+        ORDER BY id`,
+      [interiorId]
+    )).rows;
+
+    res.json({
+      glb: `/models/interiors/${interior.glb_filename}`, 
+      objects
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Не удалось загрузить определение интерьера' });
+  }
 });
+
+
 
 // Получить организацию по objectId
 app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res) => {

@@ -11,9 +11,21 @@ import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
 
 function Game({ avatarUrl, gender }) {
+
+  // 1) реф для хранилища сцены
+  const sceneRef = useRef(null);
+
+  // 2) реф для группы «города»
+  const cityGroupRef = useRef(null);
+
+  // 3) реф для группы «интерьера»
+  const interiorGroupRef = useRef(null);
+
+  const [selectedHouse, setSelectedHouse] = useState(null);
+  const [isInInterior, setIsInInterior] = useState(false);
+  const [interiorGroup, setInteriorGroup] = useState(null);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
-  const [selectedHouse, setSelectedHouse] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStats, setPlayerStats] = useState(null);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -42,12 +54,15 @@ function Game({ avatarUrl, gender }) {
     const [activeApp, setActiveApp] = useState(null);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
-    const [isInInterior, setIsInInterior] = useState(false);
-    const sceneRef = useRef(null);
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
     const playerRef = useRef(null);
     const cityMeshesRef = useRef([]);
     const groundRef = useRef(null);
-    const interiorGroupRef = useRef(null);
+    const cityGroup = new THREE.Group();
+    cityGroupRef.current = cityGroup;
+    interiorGroupRef.current = createInterior();
+    sceneRef.current.add(interiorGroupRef.current);
     const savedPositionRef = useRef(new THREE.Vector3());
     const remotePlayersRef = useRef({});
     const handleAppClick = (appName) => {
@@ -66,6 +81,101 @@ function Game({ avatarUrl, gender }) {
         } catch (error) {
             console.error('Ошибка загрузки диалога:', error);
         }
+    };
+    const loader = new GLTFLoader();
+    const enterInterior = async (houseId) => {
+      // 0. проверяем наличие токена
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Пожалуйста, войдите в систему, чтобы войти в здание');
+        return;
+      }
+      try {
+        // 1. получить interiorId
+        let res = await fetch(
+          `/api/city_objects/${houseId}/interior`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include',
+            cache: 'no-cache'
+          }
+        );
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error(`Ошибка ${res.status} при получении interior_id: ${errText}`);
+          alert(`Не удалось получить данные интерьера: ${errText}`);
+          return;
+        }
+        let { interiorId } = await res.json();
+
+        if (!interiorId || interiorId < 1) {
+          alert('Для этого здания не задан интерьер');
+          return;
+        }
+
+        // 2. получить путь к glb и список объектов внутри
+        res = await fetch(
+          `/api/interiors/${interiorId}/definition`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include',
+            cache: 'no-cache'
+          }
+        );
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error(`Ошибка ${res.status} при загрузке определения интерьера: ${errText}`);
+          alert(`Не удалось загрузить определение интерьера: ${errText}`);
+          return;
+        }
+        const { glb, objects } = await res.json();
+
+        // 3. загрузить сам интерьер (glb)
+          const baseUrl = window.location.origin;             // например "http://37.27.238.225:4000"
+          const glbUrl  = baseUrl + glb;                      // "/models/interiors/…"
+          console.log('Loading GLB from', glbUrl);
+          loader.load(glbUrl, (gltf) => {
+          // удалить городскую группу от рендера
+          // извлекаем из рефов
+          const scene     = sceneRef.current;
+          const cityGroup = cityGroupRef.current;
+          // убираем город
+          scene.remove(cityGroup);
+
+          
+          // создать новую группу для интерьера
+          const intGroup = new THREE.Group();
+          intGroup.name = 'interiorGroup';
+          intGroup.add(gltf.scene);
+          
+          // 4. добавить «мебель» и другие объекты
+          objects.forEach(o => {
+            let mesh;
+            if (o.type === 'chair') {
+              // пример: клонируем некий базовый меш
+              mesh = baseChairMesh.clone();
+            } else {
+              // простой куб, если тип неизвестен
+              mesh = new THREE.Mesh(
+                new THREE.BoxGeometry(1,1,1),
+                new THREE.MeshStandardMaterial({ color: 0x888888 })
+              );
+            }
+            mesh.position.set(o.x, o.y, o.z);
+            mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+            mesh.scale.set(o.scale, o.scale, o.scale);
+            intGroup.add(mesh);
+          });
+
+          // добавить группу интерьера в сцену и сохранить ссылку
+          scene.add(intGroup);
+          setInteriorGroup(intGroup);
+          setIsInInterior(true);
+          setSelectedHouse(null);
+        }, undefined, (err) => console.error(err));
+      } catch (e) {
+        console.error('Failed to enter interior:', e);
+      }
     };
 
     const handleAnswerSelect = (answer) => {
@@ -374,7 +484,7 @@ function movePlayerToInterior(interiorId) {
 
     let zoom = 10;
     const minZoom = zoom * 0.1;
-    const maxZoom = zoom * 1.5;
+    const maxZoom = zoom * 3.5;
 
     let scene, camera, renderer;
     let player, mixer;
@@ -1154,7 +1264,7 @@ function movePlayerToInterior(interiorId) {
           let obj = houseHit[0].object;
           while (obj && !obj.userData.id) obj = obj.parent;
           if (obj && obj.userData.id) {
-            await onObjectClick(obj);   // сразу телепорт в интерьер
+            setSelectedHouse(obj.userData.id);   // сразу телепорт в интерьер
             return;
           }
         }
@@ -1520,6 +1630,62 @@ function movePlayerToInterior(interiorId) {
           Выйти
         </button>
       )}
+
+      {selectedHouse && !isInInterior && (
+        <div style={{
+          position: 'absolute',
+          bottom: 20,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(0,0,0,0.7)',
+          color: '#fff',
+          padding: '10px 20px',
+          borderRadius: '8px',
+          zIndex: 1000
+        }}>
+          <button
+            onClick={() => enterInterior(selectedHouse)}
+            style={{
+              fontSize: '18px',
+              padding: '8px 16px',
+              background: '#00aaff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer'
+            }}
+          >
+            Войти в здание
+          </button>
+          <button
+            onClick={() => setSelectedHouse(null)}
+            style={{
+              marginLeft: '10px',
+              fontSize: '18px',
+              background: '#aaa',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer'
+            }}
+          >
+            Отмена
+          </button>
+        </div>
+      )}
+
+      {isInInterior && (
+        <button
+          style={{ position: 'absolute', top: 20, right: 20 }}
+          onClick={() => {
+            // убираем interiorGroup и возвращаем cityGroup
+            scene.remove(interiorGroup);
+            scene.add(cityGroup);
+            setIsInInterior(false);
+          }}
+        >
+          Выйти
+        </button>
+      )}
+
 
       {/* Модальное окно выбора города */}
       {showWorldMap && (
