@@ -646,6 +646,7 @@ function stopMove(dir) {
     if (!isInInterior || !playerRef.current) return;
     sceneRef.current.remove(interiorGroupRef.current);
     interiorGroupRef.current = null;
+    setInteriorGroup(null);
     toggleWorldVisibility(true);
     sceneRef.current.add(cityGroupRef.current);
     playerRef.current.position.copy(savedPositionRef.current);
@@ -1454,6 +1455,7 @@ function stopMove(dir) {
       // В функции onDocumentMouseDown заменяем существующий код на:
       async function onDocumentMouseDown(event) {
         if (!player) return;
+        if (isInInteriorRef.current) return; // disable clicks when inside
         event.preventDefault();
 
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1719,9 +1721,12 @@ function stopMove(dir) {
       if (cameraRef.current === fpCamRef.current) {
         const yaw = player.rotation.y;
         const pitch = fpPitchRef.current;
-        cameraRef.current.position.copy(target).add(new THREE.Vector3(0, 1.6, 0));
-        const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
-        cameraRef.current.lookAt(target.clone().add(forward));
+        const headPos = target.clone().add(new THREE.Vector3(0, 1.6, 0));
+        cameraRef.current.position.copy(headPos);
+        const forward = new THREE.Vector3(0, 0, -1).applyEuler(
+          new THREE.Euler(pitch, yaw, 0, 'YXZ')
+        );
+        cameraRef.current.lookAt(headPos.clone().add(forward));
         return;
       }
 
