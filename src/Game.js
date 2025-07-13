@@ -26,6 +26,9 @@ function Game({ avatarUrl, gender }) {
   const fpCamRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
+  const moveInputRef = useRef({ forward: false, backward: false, left: false, right: false });
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const isInInteriorRef = useRef(false);
 
   const [activeApp, setActiveApp] = useState(null);
 
@@ -34,6 +37,10 @@ function Game({ avatarUrl, gender }) {
   const [interiorGroup, setInteriorGroup] = useState(null);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
+
+  useEffect(() => {
+    isInInteriorRef.current = isInInterior;
+  }, [isInInterior]);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStats, setPlayerStats] = useState(null);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -166,6 +173,7 @@ function Game({ avatarUrl, gender }) {
       interiorGroupRef.current = intGroup;
       setInteriorGroup(intGroup);
       playerRef.current.position.set(0, 0, 0);
+      playerRef.current.quaternion.identity();
       switchToFirstPersonCamera();
       setIsInInterior(true);
       setSelectedHouse(null);
@@ -537,12 +545,26 @@ function switchToFirstPersonCamera() {
   if (fpCamRef.current) {
     cameraRef.current = fpCamRef.current;
   }
+  if (playerRef.current) {
+    playerRef.current.visible = false;
+  }
 }
 
 function switchToThirdPersonCamera() {
   if (orthoCamRef.current) {
     cameraRef.current = orthoCamRef.current;
   }
+  if (playerRef.current) {
+    playerRef.current.visible = true;
+  }
+}
+
+function startMove(dir) {
+  moveInputRef.current[dir] = true;
+}
+
+function stopMove(dir) {
+  moveInputRef.current[dir] = false;
 }
 
   async function buyItem(key) {
@@ -610,6 +632,7 @@ function switchToThirdPersonCamera() {
       interiorGroupRef.current = createInterior();
       sceneRef.current.add(interiorGroupRef.current);
       playerRef.current.position.set(0, 0, 0);
+      playerRef.current.quaternion.identity();
       setSelectedHouse(null);
       switchToFirstPersonCamera();
       setIsInInterior(true);
@@ -1492,12 +1515,26 @@ function switchToThirdPersonCamera() {
 
     function onKeyDown(event) {
       keys[event.key] = true;
+      if (isInInteriorRef.current) {
+        const k = event.key.toLowerCase();
+        if (k === 'arrowup' || k === 'w') startMove('forward');
+        if (k === 'arrowdown' || k === 's') startMove('backward');
+        if (k === 'arrowleft' || k === 'a') startMove('left');
+        if (k === 'arrowright' || k === 'd') startMove('right');
+      }
       destination = null;
       destinationMarker.visible = false;
     }
 
     function onKeyUp(event) {
       keys[event.key] = false;
+      if (isInInteriorRef.current) {
+        const k = event.key.toLowerCase();
+        if (k === 'arrowup' || k === 'w') stopMove('forward');
+        if (k === 'arrowdown' || k === 's') stopMove('backward');
+        if (k === 'arrowleft' || k === 'a') stopMove('left');
+        if (k === 'arrowright' || k === 'd') stopMove('right');
+      }
     }
 
     function createPlayerLabel(text) {
@@ -1646,6 +1683,18 @@ function switchToThirdPersonCamera() {
       });
     }
 
+    function updateFirstPersonMovement(delta) {
+      if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !player) return;
+      const move = moveInputRef.current;
+      const speed = 3;
+      const rot = Math.PI;
+      if (move.left) player.rotation.y += rot * delta;
+      if (move.right) player.rotation.y -= rot * delta;
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+      if (move.forward) player.position.addScaledVector(forward, speed * delta);
+      if (move.backward) player.position.addScaledVector(forward, -speed * delta);
+    }
+
     function updateCameraFollow() {
       if (!player) return;
 
@@ -1678,6 +1727,7 @@ function switchToThirdPersonCamera() {
       requestAnimationFrame(animate);
       const delta = clock.getDelta();
       updateDestinationMovement(delta);
+      updateFirstPersonMovement(delta);
       if (mixer) mixer.update(delta);
       updateTransparency();
         updateCameraFollow();
@@ -1818,6 +1868,17 @@ function switchToThirdPersonCamera() {
         >
           Выйти
         </button>
+      )}
+
+      {isInInterior && isTouchDevice && (
+        <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '40px 40px', gridTemplateRows: '40px 40px 40px', gap: '5px', gridTemplateAreas: "'up up' 'left right' 'down down'" }}>
+            <button style={{ gridArea: 'up' }} onTouchStart={() => startMove('forward')} onTouchEnd={() => stopMove('forward')}>↑</button>
+            <button style={{ gridArea: 'left' }} onTouchStart={() => startMove('left')} onTouchEnd={() => stopMove('left')}>←</button>
+            <button style={{ gridArea: 'right' }} onTouchStart={() => startMove('right')} onTouchEnd={() => stopMove('right')}>→</button>
+            <button style={{ gridArea: 'down' }} onTouchStart={() => startMove('backward')} onTouchEnd={() => stopMove('backward')}>↓</button>
+          </div>
+        </div>
       )}
 
       {selectedHouse && !isInInterior && (
