@@ -27,6 +27,7 @@ function Game({ avatarUrl, gender }) {
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
   const moveInputRef = useRef({ forward: false, backward: false, left: false, right: false });
+  const fpPitchRef = useRef(0);
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const isInInteriorRef = useRef(false);
 
@@ -548,6 +549,7 @@ function switchToFirstPersonCamera() {
   if (playerRef.current) {
     playerRef.current.visible = false;
   }
+  fpPitchRef.current = 0;
 }
 
 function switchToThirdPersonCamera() {
@@ -557,6 +559,7 @@ function switchToThirdPersonCamera() {
   if (playerRef.current) {
     playerRef.current.visible = true;
   }
+  fpPitchRef.current = 0;
 }
 
 function startMove(dir) {
@@ -1137,6 +1140,18 @@ function stopMove(dir) {
       }
     }
 
+    function onMouseLookMove(e) {
+      if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !playerRef.current) return;
+      const movementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
+      const movementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+      playerRef.current.rotation.y -= movementX * 0.002;
+      fpPitchRef.current = THREE.MathUtils.clamp(
+        fpPitchRef.current - movementY * 0.002,
+        -Math.PI / 2 + 0.1,
+        Math.PI / 2 - 0.1
+      );
+    }
+
     async function init() {
       console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
@@ -1162,6 +1177,7 @@ function stopMove(dir) {
       mountRef.current.appendChild(renderer.domElement);
 
       renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+      renderer.domElement.addEventListener('mousemove', onMouseLookMove);
 
       const planeGeometry = new THREE.PlaneGeometry(territorySize, territorySize);
       const planeMaterial = new THREE.MeshLambertMaterial({ color: 0x00aa00, side: THREE.DoubleSide });
@@ -1307,6 +1323,7 @@ function stopMove(dir) {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       renderer.domElement.addEventListener('pointerdown', onDocumentMouseDown);
+      renderer.domElement.addEventListener('mousemove', onMouseLookMove);
 
       try {
         const gltf = await loadPlayerModel(avatarUrl);
@@ -1700,8 +1717,10 @@ function stopMove(dir) {
 
       const target = player.position.clone();
       if (cameraRef.current === fpCamRef.current) {
+        const yaw = player.rotation.y;
+        const pitch = fpPitchRef.current;
         cameraRef.current.position.copy(target).add(new THREE.Vector3(0, 1.6, 0));
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+        const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
         cameraRef.current.lookAt(target.clone().add(forward));
         return;
       }
@@ -1768,6 +1787,7 @@ function stopMove(dir) {
       window.removeEventListener('keyup', onKeyUp);
       renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
       renderer.domElement.removeEventListener('wheel', onMouseWheel);
+      renderer.domElement.removeEventListener('mousemove', onMouseLookMove);
       window.removeEventListener('resize', onWindowResize);
       if (renderer && renderer.domElement && renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
