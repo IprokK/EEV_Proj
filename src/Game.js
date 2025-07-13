@@ -21,6 +21,12 @@ function Game({ avatarUrl, gender }) {
   // 3) реф для группы «интерьера»
   const interiorGroupRef = useRef(null);
 
+  // камеры
+  const orthoCamRef = useRef(null);
+  const fpCamRef = useRef(null);
+  const cameraRef = useRef(null);
+  const rendererRef = useRef(null);
+
   const [activeApp, setActiveApp] = useState(null);
 
   const [selectedHouse, setSelectedHouse] = useState(null);
@@ -160,6 +166,7 @@ function Game({ avatarUrl, gender }) {
       interiorGroupRef.current = intGroup;
       setInteriorGroup(intGroup);
       playerRef.current.position.set(0, 0, 0);
+      switchToFirstPersonCamera();
       setIsInInterior(true);
       setSelectedHouse(null);
     }
@@ -526,6 +533,18 @@ async function movePlayerToInterior(interiorId) {
   await loadInteriorScene(interiorId);
 }
 
+function switchToFirstPersonCamera() {
+  if (fpCamRef.current) {
+    cameraRef.current = fpCamRef.current;
+  }
+}
+
+function switchToThirdPersonCamera() {
+  if (orthoCamRef.current) {
+    cameraRef.current = orthoCamRef.current;
+  }
+}
+
   async function buyItem(key) {
     if (!orgMenu) return;
     const token = localStorage.getItem('token');
@@ -592,6 +611,7 @@ async function movePlayerToInterior(interiorId) {
       sceneRef.current.add(interiorGroupRef.current);
       playerRef.current.position.set(0, 0, 0);
       setSelectedHouse(null);
+      switchToFirstPersonCamera();
       setIsInInterior(true);
     }
   }
@@ -603,6 +623,7 @@ async function movePlayerToInterior(interiorId) {
     toggleWorldVisibility(true);
     sceneRef.current.add(cityGroupRef.current);
     playerRef.current.position.copy(savedPositionRef.current);
+    switchToThirdPersonCamera();
     setIsInInterior(false);
   }
 
@@ -629,7 +650,8 @@ async function movePlayerToInterior(interiorId) {
     const minZoom = zoom * 0.1;
     const maxZoom = zoom * 3.5;
 
-    let scene, camera, renderer;
+    let scene, renderer;
+    let orthoCamera, fpCamera;
     let player, mixer;
     let idleAction, walkAction, currentAction;
     let remotePlayers = remotePlayersRef.current;
@@ -987,9 +1009,9 @@ async function movePlayerToInterior(interiorId) {
 
     socket.on('chatMessage', ({ playerId, name, message, position }) => {
       console.log('← chatMessage получил:', message);
-      if (!player || !camera || !scene || !obstacles) return;
+      if (!player || !cameraRef.current || !scene || !obstacles) return;
 
-      const origin = camera.position.clone();
+      const origin = cameraRef.current.position.clone();
       const targetPos = new THREE.Vector3(position.x, player.position.y, position.z);
       const direction = new THREE.Vector3().subVectors(targetPos, origin).normalize();
       const raycaster = new THREE.Raycaster(origin, direction);
@@ -1084,9 +1106,11 @@ async function movePlayerToInterior(interiorId) {
           maxPitch
         );
       } else {
-        zoom = THREE.MathUtils.clamp(zoom * (1 + delta), minZoom, maxZoom);
-        camera.zoom = zoom;
-        camera.updateProjectionMatrix();
+        if (cameraRef.current === orthoCamRef.current) {
+          zoom = THREE.MathUtils.clamp(zoom * (1 + delta), minZoom, maxZoom);
+          orthoCamRef.current.zoom = zoom;
+          orthoCamRef.current.updateProjectionMatrix();
+        }
       }
     }
 
@@ -1096,16 +1120,22 @@ async function movePlayerToInterior(interiorId) {
       sceneRef.current = scene;
       const aspect = window.innerWidth / window.innerHeight;
       const d = 200;
-      camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
-      camera.position.set(200, 200, 200);
 
-      camera.zoom = zoom;
-      camera.updateProjectionMatrix();
+      orthoCamera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
+      orthoCamera.position.set(200, 200, 200);
+      orthoCamera.zoom = zoom;
+      orthoCamera.updateProjectionMatrix();
+      orthoCamera.lookAt(scene.position);
 
-      camera.lookAt(scene.position);
+      fpCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+
+      cameraRef.current = orthoCamera;
+      orthoCamRef.current = orthoCamera;
+      fpCamRef.current = fpCamera;
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
+      rendererRef.current = renderer;
       mountRef.current.appendChild(renderer.domElement);
 
       renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
@@ -1168,7 +1198,7 @@ async function movePlayerToInterior(interiorId) {
                     let mixers;
                     const tick = () => {
                         model.rotation.y += 0.01;
-                        renderer.render(scene, camera);
+                        renderer.render(scene, cameraRef.current);
                         window.requestAnimationFrame(tick);
                     }
                     tick();
@@ -1392,7 +1422,7 @@ async function movePlayerToInterior(interiorId) {
           -((event.clientY - rect.top) / rect.height) * 2 + 1
         );
         const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
+        raycaster.setFromCamera(mouse, cameraRef.current);
 
         // NPC
         const npcHit = raycaster.intersectObjects(npcMeshes, true);
@@ -1588,9 +1618,9 @@ async function movePlayerToInterior(interiorId) {
           }
         });
       });
-      const direction = new THREE.Vector3().subVectors(player.position, camera.position).normalize();
-      const raycaster = new THREE.Raycaster(camera.position, direction);
-      const camToPlayerDist = camera.position.distanceTo(player.position);
+      const direction = new THREE.Vector3().subVectors(player.position, cameraRef.current.position).normalize();
+      const raycaster = new THREE.Raycaster(cameraRef.current.position, direction);
+      const camToPlayerDist = cameraRef.current.position.distanceTo(player.position);
       const intersects = raycaster.intersectObjects(obstacles.map(ob => ob.mesh), true);
       intersects.forEach(hit => {
         if (hit.object === player) return;
@@ -1620,6 +1650,12 @@ async function movePlayerToInterior(interiorId) {
       if (!player) return;
 
       const target = player.position.clone();
+      if (cameraRef.current === fpCamRef.current) {
+        cameraRef.current.position.copy(target).add(new THREE.Vector3(0, 1.6, 0));
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+        cameraRef.current.lookAt(target.clone().add(forward));
+        return;
+      }
 
       const polar = basePolar + cameraPitchOffset;
 
@@ -1629,13 +1665,13 @@ async function movePlayerToInterior(interiorId) {
       const xOff = planar * Math.cos(baseAzimuth);
       const zOff = planar * Math.sin(baseAzimuth);
 
-      camera.position.set(
+      cameraRef.current.position.set(
         target.x + xOff,
         target.y + yOff,
         target.z + zOff
       );
 
-      camera.lookAt(target);
+      cameraRef.current.lookAt(target);
     }
 
     function animate() {
@@ -1652,7 +1688,7 @@ async function movePlayerToInterior(interiorId) {
         }
         r.mixer.update(delta);
       }
-      renderer.render(scene, camera);
+      renderer.render(scene, cameraRef.current);
     }
 
     (async () => {
@@ -1662,12 +1698,18 @@ async function movePlayerToInterior(interiorId) {
 
     function onWindowResize() {
       const aspect = window.innerWidth / window.innerHeight;
-      camera.left = -200 * aspect;
-      camera.right = 200 * aspect;
-      camera.top = 200;
-      camera.bottom = -200;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      if (orthoCamRef.current) {
+        orthoCamRef.current.left = -200 * aspect;
+        orthoCamRef.current.right = 200 * aspect;
+        orthoCamRef.current.top = 200;
+        orthoCamRef.current.bottom = -200;
+        orthoCamRef.current.updateProjectionMatrix();
+      }
+      if (fpCamRef.current) {
+        fpCamRef.current.aspect = aspect;
+        fpCamRef.current.updateProjectionMatrix();
+      }
+      rendererRef.current.setSize(window.innerWidth, window.innerHeight);
     }
     window.addEventListener('resize', onWindowResize, false);
 
