@@ -96,16 +96,82 @@ function Game({ avatarUrl, gender }) {
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({ color: 0x888888 })
     );
+
+    async function loadGLTF(url) {
+      return new Promise((resolve, reject) => {
+        loader.load(url, gltf => resolve(gltf), undefined, err => reject(err));
+      });
+    }
+
+    async function loadInteriorScene(interiorId) {
+      const token = localStorage.getItem('token');
+      const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        cache: 'no-cache'
+      });
+
+      if (!defRes.ok) {
+        const errText = await defRes.text();
+        console.error(`Ошибка ${defRes.status} при загрузке определения интерьера: ${errText}`);
+        alert(`Не удалось загрузить определение интерьера: ${errText}`);
+        return;
+      }
+
+      const { glb, objects } = await defRes.json();
+      const baseUrl = window.location.origin;
+      const glbUrl = baseUrl + glb;
+      console.log('Loading GLB from', glbUrl);
+
+      const gltf = await loadGLTF(glbUrl);
+
+      const scene = sceneRef.current;
+      savedPositionRef.current.copy(playerRef.current.position);
+      toggleWorldVisibility(false);
+      scene.remove(cityGroupRef.current);
+
+      const intGroup = new THREE.Group();
+      intGroup.name = 'interiorGroup';
+      intGroup.add(gltf.scene);
+
+      for (const o of objects) {
+        if (o.model_url) {
+          try {
+            const objGltf = await loadGLTF(baseUrl + o.model_url);
+            objGltf.scene.position.set(o.x, o.y, o.z);
+            objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+            objGltf.scene.scale.set(o.scale, o.scale, o.scale);
+            intGroup.add(objGltf.scene);
+          } catch (e) {
+            console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
+          }
+        } else {
+          const mesh = baseChairMesh.clone();
+          mesh.position.set(o.x, o.y, o.z);
+          mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+          mesh.scale.set(o.scale, o.scale, o.scale);
+          intGroup.add(mesh);
+        }
+      }
+
+      const light = new THREE.AmbientLight(0xffffff, 1);
+      intGroup.add(light);
+
+      scene.add(intGroup);
+      interiorGroupRef.current = intGroup;
+      setInteriorGroup(intGroup);
+      playerRef.current.position.set(0, 0, 0);
+      setIsInInterior(true);
+      setSelectedHouse(null);
+    }
     const enterInterior = async (houseId) => {
-      // 0. проверяем наличие токена
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Пожалуйста, войдите в систему, чтобы войти в здание');
         return;
       }
       try {
-        // 1. получить interiorId
-        let res = await fetch(
+        const res = await fetch(
           `/api/city_objects/${houseId}/interior`,
           {
             headers: { Authorization: `Bearer ${token}` },
@@ -126,69 +192,7 @@ function Game({ avatarUrl, gender }) {
           return;
         }
 
-        // 2. получить путь к glb и список объектов внутри
-        res = await fetch(
-          `/api/interiors/${interiorId}/definition`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            credentials: 'include',
-            cache: 'no-cache'
-          }
-        );
-        if (!res.ok) {
-          const errText = await res.text();
-          console.error(`Ошибка ${res.status} при загрузке определения интерьера: ${errText}`);
-          alert(`Не удалось загрузить определение интерьера: ${errText}`);
-          return;
-        }
-        const { glb, objects } = await res.json();
-
-        // 3. загрузить сам интерьер (glb)
-          const baseUrl = window.location.origin;             // например "http://37.27.238.225:4000"
-          const glbUrl  = baseUrl + glb;                      // "/models/interiors/…"
-          console.log('Loading GLB from', glbUrl);
-          loader.load(glbUrl, (gltf) => {
-          // удалить городскую группу от рендера
-          
-          const scene     = sceneRef.current;
-
-          // прячем мир и сохраняем позицию игрока
-          savedPositionRef.current.copy(playerRef.current.position);
-          toggleWorldVisibility(false);
-
-          
-          // создать новую группу для интерьера
-          const intGroup = new THREE.Group();
-          intGroup.name = 'interiorGroup';
-          intGroup.add(gltf.scene);
-          
-          // 4. добавить «мебель» и другие объекты
-          objects.forEach(o => {
-            let mesh;
-            if (o.type === 'chair') {
-              // пример: клонируем некий базовый меш
-              mesh = baseChairMesh.clone();
-            } else {
-              // простой куб, если тип неизвестен
-              mesh = new THREE.Mesh(
-                new THREE.BoxGeometry(1,1,1),
-                new THREE.MeshStandardMaterial({ color: 0x888888 })
-              );
-            }
-            mesh.position.set(o.x, o.y, o.z);
-            mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-            mesh.scale.set(o.scale, o.scale, o.scale);
-            intGroup.add(mesh);
-          });
-
-          // добавить группу интерьера в сцену и сохранить ссылку
-          scene.add(intGroup);
-          interiorGroupRef.current = intGroup;
-          setInteriorGroup(intGroup);
-          playerRef.current.position.set(0, 0, 0);
-          setIsInInterior(true);
-          setSelectedHouse(null);
-        }, undefined, (err) => console.error(err));
+        await loadInteriorScene(interiorId);
       } catch (e) {
         console.error('Failed to enter interior:', e);
       }
@@ -519,9 +523,8 @@ function Game({ avatarUrl, gender }) {
   }
 
 
-function movePlayerToInterior(interiorId) {
-  // тут ваша логика загрузки сцены/камеры
-  Game.loadInteriorScene(interiorId);
+async function movePlayerToInterior(interiorId) {
+  await loadInteriorScene(interiorId);
 }
 
   async function buyItem(key) {
