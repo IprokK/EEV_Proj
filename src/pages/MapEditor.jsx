@@ -28,6 +28,9 @@ export default function MapEditor() {
   const objectsRef = useRef([]);
   const removedIdsRef = useRef([]);
   const selectedRef = useRef(null);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const transformStart = useRef(null);
   const loader = useRef(new GLTFLoader()).current;
   const materialRef = useRef();
 
@@ -41,6 +44,69 @@ export default function MapEditor() {
       rotY: obj.rotation.y,
       rotZ: obj.rotation.z
     });
+  };
+
+  const pushAction = action => {
+    undoStack.current.push(action);
+    redoStack.current = [];
+  };
+
+  const undo = () => {
+    const action = undoStack.current.pop();
+    if (!action) return;
+    redoStack.current.push(action);
+    switch (action.type) {
+      case 'add':
+        if (action.object.parent) action.object.parent.remove(action.object);
+        objectsRef.current = objectsRef.current.filter(o => o !== action.object);
+        if (selectedRef.current === action.object) {
+          selectedRef.current = null;
+          setSelectedObj(null);
+        }
+        break;
+      case 'delete':
+        sceneRef.current.add(action.object);
+        objectsRef.current.splice(action.index, 0, action.object);
+        selectedRef.current = action.object;
+        setSelectedObj(action.object);
+        break;
+      case 'transform':
+        action.object.position.copy(action.prevPosition);
+        action.object.rotation.copy(action.prevRotation);
+        break;
+      default:
+        break;
+    }
+    updateCoordsValues(selectedRef.current);
+  };
+
+  const redo = () => {
+    const action = redoStack.current.pop();
+    if (!action) return;
+    undoStack.current.push(action);
+    switch (action.type) {
+      case 'add':
+        sceneRef.current.add(action.object);
+        objectsRef.current.push(action.object);
+        selectedRef.current = action.object;
+        setSelectedObj(action.object);
+        break;
+      case 'delete':
+        if (action.object.parent) action.object.parent.remove(action.object);
+        objectsRef.current = objectsRef.current.filter(o => o !== action.object);
+        if (selectedRef.current === action.object) {
+          selectedRef.current = null;
+          setSelectedObj(null);
+        }
+        break;
+      case 'transform':
+        action.object.position.copy(action.newPosition);
+        action.object.rotation.copy(action.newRotation);
+        break;
+      default:
+        break;
+    }
+    updateCoordsValues(selectedRef.current);
   };
 
   useEffect(() => {
@@ -84,6 +150,29 @@ export default function MapEditor() {
     });
     scene.add(transform);
     transformRef.current = transform;
+    transform.addEventListener('mouseDown', () => {
+      if (selectedRef.current) {
+        transformStart.current = {
+          object: selectedRef.current,
+          pos: selectedRef.current.position.clone(),
+          rot: selectedRef.current.rotation.clone()
+        };
+      }
+    });
+    transform.addEventListener('mouseUp', () => {
+      if (transformStart.current) {
+        const obj = transformStart.current.object;
+        pushAction({
+          type: 'transform',
+          object: obj,
+          prevPosition: transformStart.current.pos,
+          prevRotation: transformStart.current.rot,
+          newPosition: obj.position.clone(),
+          newRotation: obj.rotation.clone()
+        });
+        transformStart.current = null;
+      }
+    });
     transform.addEventListener('objectChange', () => {
       if (selectedRef.current) {
         updateCoordsValues(selectedRef.current);
@@ -209,7 +298,27 @@ export default function MapEditor() {
       selectedRef.current = m;
       setSelectedObj(m);
       updateCoordsValues(m);
+      pushAction({ type: 'add', object: m });
     });
+  };
+
+  const copySelected = () => {
+    const obj = selectedRef.current;
+    if (!obj) return;
+    const clone = obj.clone(true);
+    clone.traverse(child => {
+      if (child.isMesh && materialRef.current) {
+        child.material = materialRef.current.clone();
+        child.material.needsUpdate = true;
+      }
+    });
+    sceneRef.current.add(clone);
+    objectsRef.current.push(clone);
+    transformRef.current.attach(clone);
+    selectedRef.current = clone;
+    setSelectedObj(clone);
+    updateCoordsValues(clone);
+    pushAction({ type: 'add', object: clone });
   };
 
   const deleteSelected = () => {
@@ -221,6 +330,7 @@ export default function MapEditor() {
     } else {
       sceneRef.current.remove(obj);
     }
+    const idx = objectsRef.current.indexOf(obj);
     objectsRef.current = objectsRef.current.filter(o => o !== obj);
     if (obj.userData.id) {
       removedIdsRef.current.push(obj.userData.id);
@@ -228,6 +338,7 @@ export default function MapEditor() {
     selectedRef.current = null;
     setSelectedObj(null);
     setCoords({ posX: 0, posY: 0, posZ: 0, rotX: 0, rotY: 0, rotZ: 0 });
+    pushAction({ type: 'delete', object: obj, index: idx });
   };
 
   const handleCoordChange = (field, value) => {
@@ -235,6 +346,8 @@ export default function MapEditor() {
     const num = parseFloat(value);
     const obj = selectedRef.current;
     if (!obj || isNaN(num)) return;
+    const prevPos = obj.position.clone();
+    const prevRot = obj.rotation.clone();
     switch (field) {
       case 'posX':
         obj.position.x = num;
@@ -257,6 +370,14 @@ export default function MapEditor() {
       default:
         break;
     }
+    pushAction({
+      type: 'transform',
+      object: obj,
+      prevPosition: prevPos,
+      prevRotation: prevRot,
+      newPosition: obj.position.clone(),
+      newRotation: obj.rotation.clone()
+    });
     if (transformRef.current) {
       transformRef.current.updateMatrixWorld(true);
     }
@@ -314,6 +435,9 @@ export default function MapEditor() {
           {mode === 'translate' ? 'Перемещение' : 'Вращение'}
         </button>
         <button onClick={deleteSelected}>Удалить</button>
+        <button onClick={copySelected}>Копировать</button>
+        <button onClick={undo}>Назад</button>
+        <button onClick={redo}>Вперед</button>
         <button onClick={saveMap}>Сохранить</button>
       </div>
       {selectedObj && (
