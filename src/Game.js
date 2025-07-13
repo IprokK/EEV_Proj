@@ -13,7 +13,7 @@ import DoubleTapWrapper from './pages/DoubleTapWrapper';
 function Game({ avatarUrl, gender }) {
 
   // 1) реф для хранилища сцены
-  const sceneRef = useRef(null);
+  const sceneRef = useRef(new THREE.Scene());
 
   // 2) реф для группы «города»
   const cityGroupRef = useRef(null);
@@ -60,8 +60,7 @@ function Game({ avatarUrl, gender }) {
     const [appsHidden, setAppsHidden] = useState(false);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
+    const scene = sceneRef.current;
     const playerRef = useRef(null);
     const cityMeshesRef = useRef([]);
     const groundRef = useRef(null);
