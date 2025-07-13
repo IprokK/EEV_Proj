@@ -1332,6 +1332,10 @@ async function movePlayerToInterior(interiorId) {
         dontCrossCorners: true,
         diagonalMovement: PF.DiagonalMovement.OnlyWhenNoObstacles
       });
+      if (!pathfinderGrid) {
+        console.warn('Pathfinder grid not ready');
+        return [];
+      }
       const gridClone = pathfinderGrid.clone();
 
       if (!gridClone.isWalkableAt(startX, startZ)) {
