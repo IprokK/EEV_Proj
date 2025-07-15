@@ -700,10 +700,11 @@ function stopMove(dir) {
     const nodeSize = territorySize / gridSize;
 
     let pathfinderGrid;
-    let currentPath = []; 
+    let currentPath = [];
     let pathIndex = 0;
     let groundPlane;
     let destinationMarker;
+    let customMaterial;
 
     const token = localStorage.getItem('token');
     socketRef.current = io({
@@ -1212,7 +1213,7 @@ function stopMove(dir) {
       });
       const textureLoader = new THREE.TextureLoader(loadingManager);
       const baseTexture = textureLoader.load('textures/base.png');
-      const customMaterial = new THREE.MeshStandardMaterial({
+      customMaterial = new THREE.MeshStandardMaterial({
         map: baseTexture,
       });
 
