@@ -4,7 +4,27 @@ const db = require('./db');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+
 const { virtualWorldPool } = require('./db1');
+
+async function ensureMessagesTable() {
+  try {
+    await virtualWorldPool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INTEGER NOT NULL,
+        receiver_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        is_read BOOLEAN DEFAULT FALSE
+      )
+    `);
+  } catch (e) {
+    console.error('Ошибка создания таблицы messages', e);
+  }
+}
+
+ensureMessagesTable();
 
 
 app.use(express.json());
@@ -161,9 +181,10 @@ io.on('connection', socket => {
   socket.on('sendMessage', async ({ receiverId, message }, callback) => {
         try {
             const senderId = socket.userId;
+            const recvId = parseInt(receiverId, 10);
 
             // Проверка получателя
-            const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+            const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
             if (receiverCheck.rows.length === 0) {
                 return callback({ error: 'Пользователь не найден' });
             }
@@ -173,11 +194,11 @@ io.on('connection', socket => {
                 `INSERT INTO messages (sender_id, receiver_id, message)
        VALUES ($1, $2, $3)
        RETURNING id, created_at, is_read`,
-                [senderId, receiverId, message]
+                [senderId, recvId, message]
             );
 
             const newMessage = result.rows[0];
-            const receiverSocketId = onlineUsers[receiverId];
+            const receiverSocketId = onlineUsers[recvId];
 
             // Отправка получателю
             if (receiverSocketId) {
@@ -304,7 +325,7 @@ app.get('/api/users', authenticate, async (req, res) => {
 // Новый маршрут для получения сообщений с конкретным контактом
 app.get('/api/messages/:contactId', authenticate, async (req, res) => {
     const userId = req.user.id;
-    const contactId = req.params.contactId;
+    const contactId = parseInt(req.params.contactId, 10);
 
     try {
         const messagesRes = await virtualWorldPool.query(
@@ -325,10 +346,11 @@ app.get('/api/messages/:contactId', authenticate, async (req, res) => {
 app.post('/api/messages/send', authenticate, async (req, res) => {
     const senderId = req.user.id;
     const { receiverId, message } = req.body;
+    const recvId = parseInt(receiverId, 10);
 
     try {
         // Проверка существования получателя в основной БД
-        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
         if (receiverCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Пользователь не найден' });
         }
@@ -338,13 +360,13 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
             `INSERT INTO messages (sender_id, receiver_id, message)
        VALUES ($1, $2, $3)
        RETURNING id, created_at, is_read`,
-            [senderId, receiverId, message]
+            [senderId, recvId, message]
         );
 
         const newMessage = result.rows[0];
 
         // Отправка через сокеты, если получатель онлайн
-        const receiverSocketId = onlineUsers[receiverId];
+        const receiverSocketId = onlineUsers[recvId];
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('newMessage', {
                 id: newMessage.id,
