@@ -631,14 +631,12 @@ app.get(
 app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) => {
   const interiorId = parseInt(req.params.interiorId, 10);
   try {
-    // получаем контейнер-glb
     const interior = (await db.query(
-      'SELECT glb_filename FROM interiors WHERE id = $1',
+      'SELECT glb_filename, pos_x, pos_y, pos_z FROM interiors WHERE id = $1',
       [interiorId]
     )).rows[0];
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
 
-    // получаем все объекты с model_url
     const objects = (await db.query(
       `SELECT type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
          FROM interior_objects
@@ -648,12 +646,26 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
     )).rows;
 
     res.json({
-      glb: `/models/interiors/${interior.glb_filename}`, 
+      glb: `/models/interiors/${interior.glb_filename}`,
+      position: { x: interior.pos_x, y: interior.pos_y, z: interior.pos_z },
       objects
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Не удалось загрузить определение интерьера' });
+  }
+});
+
+// Список интерьеров с координатами для отображения на карте
+app.get('/api/interiors', authenticate, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT id, pos_x, pos_y, pos_z FROM interiors ORDER BY id'
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('Ошибка получения списка интерьеров', e);
+    res.status(500).json({ error: 'Не удалось получить список интерьеров' });
   }
 });
 

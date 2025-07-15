@@ -30,6 +30,7 @@ function Game({ avatarUrl, gender }) {
   const fpPitchRef = useRef(0);
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const isInInteriorRef = useRef(false);
+  const LOAD_RADIUS = 120;
 
   const [activeApp, setActiveApp] = useState(null);
 
@@ -77,6 +78,10 @@ function Game({ avatarUrl, gender }) {
     const scene = sceneRef.current;
     const playerRef = useRef(null);
     const cityMeshesRef = useRef([]);
+    const cityObjectsDataRef = useRef([]);
+    const loadedCityObjectsRef = useRef({});
+    const loadedInteriorMeshesRef = useRef({});
+    const interiorsDataRef = useRef([]);
     const groundRef = useRef(null);
     const cityGroup = new THREE.Group();
     cityGroupRef.current = cityGroup;
@@ -652,6 +657,7 @@ function stopMove(dir) {
     playerRef.current.position.copy(savedPositionRef.current);
     switchToThirdPersonCamera();
     setIsInInterior(false);
+    updateCityObjectVisibility();
   }
 
   useEffect(() => {
@@ -1156,6 +1162,7 @@ function stopMove(dir) {
     async function init() {
       console.log('[DEBUG] init вызван');
       scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0xcce0ff, 0.002);
       sceneRef.current = scene;
       const aspect = window.innerWidth / window.innerHeight;
       const d = 200;
@@ -1174,6 +1181,7 @@ function stopMove(dir) {
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(0xcce0ff);
       rendererRef.current = renderer;
       mountRef.current.appendChild(renderer.domElement);
 
@@ -1250,76 +1258,31 @@ function stopMove(dir) {
 
         }
       // Загрузка объектов города из базы данных
-      let loadedModelsCount = 0;
       let cityObjects = [];
-      let totalModelsToLoad = 0;
       try {
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const cityId = profile.last_city_id || 1; // по умолчанию 1, если нет
-        console.log('[DEBUG] cityId для загрузки объектов:', cityId);
+        const cityId = profile.last_city_id || 1;
         const token = localStorage.getItem('token');
         const res = await fetch(`/api/cities/${cityId}/objects`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         cityObjects = await res.json();
-        console.log('[DEBUG] Список объектов для загрузки (cityObjects):', cityObjects);
-        totalModelsToLoad = cityObjects.length;
       } catch (e) {
         console.error('[DEBUG] Ошибка загрузки объектов города:', e);
         cityObjects = [];
-        totalModelsToLoad = 0;
       }
 
-      console.log('[DEBUG] cityObjects:', cityObjects);
+      cityObjectsDataRef.current = cityObjects;
+      let interiors = [];
       try {
-        cityObjects.forEach(obj => {
-          console.log('[DEBUG] Загружаю объект:', obj);
-          gltfLoader.load(
-            obj.model_url,
-            (gltf) => {
-              const model = gltf.scene;
-              model.userData = {
-                id: obj.id,                    // уникальный ID объекта
-                type: obj.name,                // название типа модели
-                organizationId: obj.organization_id, // ID организации
-                rent: obj.rent,                // стоимость аренды (если есть)
-                tax: obj.tax                   // налог (если есть)
-              };
-
-              model.scale.set(1, 1, 1);
-              model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
-              model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
-              model.traverse(child => {
-                if (child.isMesh) {
-                  child.material = customMaterial.clone();
-                  child.material.needsUpdate = true;
-                }
-              });
-              scene.add(model);
-              cityMeshesRef.current.push(model);
-              model.updateMatrixWorld();
-              const boundingBox = new THREE.Box3().setFromObject(model);
-              const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
-              if (isCollidable) {
-                obstacles.push({ mesh: model, box: boundingBox });
-              }
-
-              loadedModelsCount++;
-              console.log(`[DEBUG] Модель ${obj.name} успешно загружена (${loadedModelsCount}/${totalModelsToLoad})`);
-              if (loadedModelsCount === totalModelsToLoad) {
-                console.log('[DEBUG] Все модели загружены. Строим сетку...');
-                buildPathfindingGrid();
-              }
-            },
-            undefined,
-            (error) => {
-              console.error(`[DEBUG] Ошибка загрузки модели ${obj.name}:`, error);
-            }
-          );
-        });
+        const token = localStorage.getItem('token');
+        const resInt = await fetch('/api/interiors', { headers: { Authorization: `Bearer ${token}` } });
+        interiors = await resInt.json();
       } catch (e) {
-        console.error('[DEBUG] Ошибка в cityObjects.forEach:', e);
+        console.error('Ошибка загрузки списка интерьеров', e);
       }
+      interiorsDataRef.current = interiors;
+      updateCityObjectVisibility();
 
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
@@ -1452,6 +1415,94 @@ function stopMove(dir) {
       });
     }
 
+    function loadCityObject(obj) {
+      gltfLoader.load(
+        obj.model_url,
+        (gltf) => {
+          const model = gltf.scene;
+          model.userData = {
+            id: obj.id,
+            type: obj.name,
+            organizationId: obj.organization_id,
+            rent: obj.rent,
+            tax: obj.tax
+          };
+          model.scale.set(1, 1, 1);
+          model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
+          model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
+          model.traverse(child => {
+            if (child.isMesh) {
+              child.material = customMaterial.clone();
+              child.material.needsUpdate = true;
+            }
+          });
+          scene.add(model);
+          cityMeshesRef.current.push(model);
+          const boundingBox = new THREE.Box3().setFromObject(model);
+          const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
+          if (isCollidable) {
+            obstacles.push({ mesh: model, box: boundingBox });
+          }
+          loadedCityObjectsRef.current[obj.id] = { mesh: model, data: obj };
+          buildPathfindingGrid();
+        },
+        undefined,
+        (error) => console.error('Ошибка загрузки объекта', obj.name, error)
+      );
+    }
+
+    function unloadCityObject(id) {
+      const entry = loadedCityObjectsRef.current[id];
+      if (!entry) return;
+      const { mesh } = entry;
+      scene.remove(mesh);
+      cityMeshesRef.current = cityMeshesRef.current.filter(m => m !== mesh);
+      obstacles = obstacles.filter(o => o.mesh !== mesh);
+      delete loadedCityObjectsRef.current[id];
+      buildPathfindingGrid();
+    }
+
+    function updateCityObjectVisibility() {
+      if (!player) return;
+      const p = player.position;
+      cityObjectsDataRef.current.forEach(obj => {
+        const dist = Math.hypot(obj.pos_x - p.x, obj.pos_z - p.z);
+        if (dist <= LOAD_RADIUS) {
+          if (!loadedCityObjectsRef.current[obj.id]) loadCityObject(obj);
+        } else {
+          if (loadedCityObjectsRef.current[obj.id]) unloadCityObject(obj.id);
+        }
+      });
+      interiorsDataRef.current.forEach(int => {
+        const dist = Math.hypot(int.pos_x - p.x, int.pos_z - p.z);
+        if (dist <= LOAD_RADIUS) {
+          if (!loadedInteriorMeshesRef.current[int.id]) loadInteriorPlaceholder(int);
+        } else if (loadedInteriorMeshesRef.current[int.id]) {
+          unloadInteriorPlaceholder(int.id);
+        }
+      });
+    }
+
+    function loadInteriorPlaceholder(int) {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 2, 2),
+        new THREE.MeshStandardMaterial({ color: 0x00ffcc })
+      );
+      mesh.position.set(int.pos_x, int.pos_y, int.pos_z);
+      mesh.userData.interiorId = int.id;
+      scene.add(mesh);
+      cityMeshesRef.current.push(mesh);
+      loadedInteriorMeshesRef.current[int.id] = mesh;
+    }
+
+    function unloadInteriorPlaceholder(id) {
+      const mesh = loadedInteriorMeshesRef.current[id];
+      if (!mesh) return;
+      scene.remove(mesh);
+      cityMeshesRef.current = cityMeshesRef.current.filter(m => m !== mesh);
+      delete loadedInteriorMeshesRef.current[id];
+    }
+
       // В функции onDocumentMouseDown заменяем существующий код на:
       async function onDocumentMouseDown(event) {
         if (!player) return;
@@ -1481,9 +1532,13 @@ function stopMove(dir) {
         const houseHit = raycaster.intersectObjects(obstacles.map(o => o.mesh), true);
         if (houseHit.length) {
           let obj = houseHit[0].object;
-          while (obj && !obj.userData.id) obj = obj.parent;
+          while (obj && !obj.userData.id && !obj.userData.interiorId) obj = obj.parent;
           if (obj && obj.userData.id) {
-            setSelectedHouse(obj.userData.id);   // сразу телепорт в интерьер
+            setSelectedHouse(obj.userData.id);
+            return;
+          }
+          if (obj && obj.userData.interiorId) {
+            await loadInteriorScene(obj.userData.interiorId);
             return;
           }
         }
@@ -1754,7 +1809,8 @@ function stopMove(dir) {
       updateFirstPersonMovement(delta);
       if (mixer) mixer.update(delta);
       updateTransparency();
-        updateCameraFollow();
+      updateCityObjectVisibility();
+      updateCameraFollow();
       for (let id in remotePlayers) {
         const r = remotePlayers[id];
         if (r.targetPosition) {
