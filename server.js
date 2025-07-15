@@ -691,6 +691,84 @@ app.get('/api/interiors', authenticate, async (req, res) => {
   }
 });
 
+// Получить объекты интерьера
+app.get('/api/interiors/:id/objects', authenticate, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await db.query(
+      `SELECT id, model_url, x, y, z, rot_x, rot_y, rot_z, scale
+         FROM interior_objects
+        WHERE interior_id = $1
+        ORDER BY id`,
+      [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('Ошибка получения объектов интерьера', e);
+    res.status(500).json({ error: 'Не удалось получить объекты интерьера' });
+  }
+});
+
+// Сохранить объекты интерьера в БД
+app.post('/api/interiors/:id/save', authenticate, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { objects = [], removedIds = [] } = req.body;
+  if (!Array.isArray(objects) || !Array.isArray(removedIds)) {
+    return res.status(400).json({ error: 'Invalid objects' });
+  }
+  try {
+    if (removedIds.length) {
+      await db.query(
+        'DELETE FROM interior_objects WHERE id = ANY($1::int[]) AND interior_id = $2',
+        [removedIds, id]
+      );
+    }
+    for (const obj of objects) {
+      if (obj.id) {
+        await db.query(
+          `UPDATE interior_objects
+              SET model_url=$1, x=$2, y=$3, z=$4,
+                  rot_x=$5, rot_y=$6, rot_z=$7, scale=$8
+            WHERE id=$9 AND interior_id=$10`,
+          [
+            obj.model_url,
+            obj.x,
+            obj.y,
+            obj.z,
+            obj.rot_x,
+            obj.rot_y,
+            obj.rot_z,
+            obj.scale,
+            obj.id,
+            id
+          ]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO interior_objects
+            (interior_id, model_url, x, y, z, rot_x, rot_y, rot_z, scale)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            id,
+            obj.model_url,
+            obj.x,
+            obj.y,
+            obj.z,
+            obj.rot_x,
+            obj.rot_y,
+            obj.rot_z,
+            obj.scale
+          ]
+        );
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Ошибка сохранения интерьера', e);
+    res.status(500).json({ error: 'Не удалось сохранить интерьер' });
+  }
+});
+
 
 
 // Получить организацию по objectId
