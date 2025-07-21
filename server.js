@@ -4,7 +4,27 @@ const db = require('./db');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+
 const { virtualWorldPool } = require('./db1');
+
+async function ensureMessagesTable() {
+  try {
+    await virtualWorldPool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INTEGER NOT NULL,
+        receiver_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        is_read BOOLEAN DEFAULT FALSE
+      )
+    `);
+  } catch (e) {
+    console.error('Ошибка создания таблицы messages', e);
+  }
+}
+
+ensureMessagesTable();
 
 
 app.use(express.json());
@@ -161,9 +181,10 @@ io.on('connection', socket => {
   socket.on('sendMessage', async ({ receiverId, message }, callback) => {
         try {
             const senderId = socket.userId;
+            const recvId = parseInt(receiverId, 10);
 
             // Проверка получателя
-            const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+            const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
             if (receiverCheck.rows.length === 0) {
                 return callback({ error: 'Пользователь не найден' });
             }
@@ -173,11 +194,11 @@ io.on('connection', socket => {
                 `INSERT INTO messages (sender_id, receiver_id, message)
        VALUES ($1, $2, $3)
        RETURNING id, created_at, is_read`,
-                [senderId, receiverId, message]
+                [senderId, recvId, message]
             );
 
             const newMessage = result.rows[0];
-            const receiverSocketId = onlineUsers[receiverId];
+            const receiverSocketId = onlineUsers[recvId];
 
             // Отправка получателю
             if (receiverSocketId) {
@@ -304,7 +325,7 @@ app.get('/api/users', authenticate, async (req, res) => {
 // Новый маршрут для получения сообщений с конкретным контактом
 app.get('/api/messages/:contactId', authenticate, async (req, res) => {
     const userId = req.user.id;
-    const contactId = req.params.contactId;
+    const contactId = parseInt(req.params.contactId, 10);
 
     try {
         const messagesRes = await virtualWorldPool.query(
@@ -325,10 +346,11 @@ app.get('/api/messages/:contactId', authenticate, async (req, res) => {
 app.post('/api/messages/send', authenticate, async (req, res) => {
     const senderId = req.user.id;
     const { receiverId, message } = req.body;
+    const recvId = parseInt(receiverId, 10);
 
     try {
         // Проверка существования получателя в основной БД
-        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
         if (receiverCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Пользователь не найден' });
         }
@@ -338,13 +360,13 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
             `INSERT INTO messages (sender_id, receiver_id, message)
        VALUES ($1, $2, $3)
        RETURNING id, created_at, is_read`,
-            [senderId, receiverId, message]
+            [senderId, recvId, message]
         );
 
         const newMessage = result.rows[0];
 
         // Отправка через сокеты, если получатель онлайн
-        const receiverSocketId = onlineUsers[receiverId];
+        const receiverSocketId = onlineUsers[recvId];
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('newMessage', {
                 id: newMessage.id,
@@ -631,14 +653,12 @@ app.get(
 app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) => {
   const interiorId = parseInt(req.params.interiorId, 10);
   try {
-    // получаем контейнер-glb
     const interior = (await db.query(
-      'SELECT glb_filename FROM interiors WHERE id = $1',
+      'SELECT glb_filename, pos_x, pos_y, pos_z FROM interiors WHERE id = $1',
       [interiorId]
     )).rows[0];
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
 
-    // получаем все объекты с model_url
     const objects = (await db.query(
       `SELECT type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
          FROM interior_objects
@@ -648,12 +668,104 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
     )).rows;
 
     res.json({
-      glb: `/models/interiors/${interior.glb_filename}`, 
+      glb: `/models/interiors/${interior.glb_filename}`,
+      position: { x: interior.pos_x, y: interior.pos_y, z: interior.pos_z },
       objects
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Не удалось загрузить определение интерьера' });
+  }
+});
+
+// Список интерьеров с координатами для отображения на карте
+app.get('/api/interiors', authenticate, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT id, pos_x, pos_y, pos_z FROM interiors ORDER BY id'
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('Ошибка получения списка интерьеров', e);
+    res.status(500).json({ error: 'Не удалось получить список интерьеров' });
+  }
+});
+
+// Получить объекты интерьера
+app.get('/api/interiors/:id/objects', authenticate, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await db.query(
+      `SELECT id, model_url, x, y, z, rot_x, rot_y, rot_z, scale
+         FROM interior_objects
+        WHERE interior_id = $1
+        ORDER BY id`,
+      [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('Ошибка получения объектов интерьера', e);
+    res.status(500).json({ error: 'Не удалось получить объекты интерьера' });
+  }
+});
+
+// Сохранить объекты интерьера в БД
+app.post('/api/interiors/:id/save', authenticate, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { objects = [], removedIds = [] } = req.body;
+  if (!Array.isArray(objects) || !Array.isArray(removedIds)) {
+    return res.status(400).json({ error: 'Invalid objects' });
+  }
+  try {
+    if (removedIds.length) {
+      await db.query(
+        'DELETE FROM interior_objects WHERE id = ANY($1::int[]) AND interior_id = $2',
+        [removedIds, id]
+      );
+    }
+    for (const obj of objects) {
+      if (obj.id) {
+        await db.query(
+          `UPDATE interior_objects
+              SET model_url=$1, x=$2, y=$3, z=$4,
+                  rot_x=$5, rot_y=$6, rot_z=$7, scale=$8
+            WHERE id=$9 AND interior_id=$10`,
+          [
+            obj.model_url,
+            obj.x,
+            obj.y,
+            obj.z,
+            obj.rot_x,
+            obj.rot_y,
+            obj.rot_z,
+            obj.scale,
+            obj.id,
+            id
+          ]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO interior_objects
+            (interior_id, model_url, x, y, z, rot_x, rot_y, rot_z, scale)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            id,
+            obj.model_url,
+            obj.x,
+            obj.y,
+            obj.z,
+            obj.rot_x,
+            obj.rot_y,
+            obj.rot_z,
+            obj.scale
+          ]
+        );
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Ошибка сохранения интерьера', e);
+    res.status(500).json({ error: 'Не удалось сохранить интерьер' });
   }
 });
 

@@ -9,6 +9,7 @@ import RegisterStep3    from './pages/RegisterStep3';
 import GameWrapper      from './components/GameWrapper';
 import RequireProfile   from './components/RequireProfile';
 import MapEditor        from './pages/MapEditor';
+import InteriorEditor   from './pages/InteriorEditor';
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(!!localStorage.getItem('token'));
@@ -59,6 +60,18 @@ export default function App() {
           isAuth
             ? <RequireProfile>
                 <MapEditor />
+              </RequireProfile>
+            : <Navigate to="/login" replace/>
+        }
+      />
+
+      {/* редактор интерьеров */}
+      <Route
+        path="/interior-editor"
+        element={
+          isAuth
+            ? <RequireProfile>
+                <InteriorEditor />
               </RequireProfile>
             : <Navigate to="/login" replace/>
         }
