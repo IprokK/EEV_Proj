@@ -51,6 +51,9 @@ function Game({ avatarUrl, gender }) {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
   });
+  const [balance, setBalance] = useState(0);
+  const [inventory, setInventory] = useState([]);
+  const [showInventory, setShowInventory] = useState(false);
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -732,6 +735,9 @@ function stopMove(dir) {
     socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
     socket.on('connect_error', err => console.error('Socket connect_error:', err));
     socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
+    socket.on('economy:balanceChanged', ({ balance: b }) => setBalance(b));
+    socket.on('economy:inventory', items => setInventory(items));
+    socket.emit('economy:getBalance', { currency: 'USD' });
     const gltfLoader = new GLTFLoader();
     const animLoader = new GLTFLoader();
 
@@ -1605,8 +1611,15 @@ function stopMove(dir) {
 
     function onKeyDown(event) {
       keys[event.key] = true;
+      const k = event.key.toLowerCase();
+      if (k === 'i') {
+        setShowInventory(v => {
+          const nv = !v;
+          if (!v) socket.emit('economy:getInventory');
+          return nv;
+        });
+      }
       if (isInInteriorRef.current) {
-        const k = event.key.toLowerCase();
         if (k === 'arrowup' || k === 'w') startMove('forward');
         if (k === 'arrowdown' || k === 's') startMove('backward');
         if (k === 'arrowleft' || k === 'a') startMove('left');
@@ -1923,6 +1936,9 @@ function stopMove(dir) {
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
+      </div>
+      <div style={{ position: 'absolute', top: 50, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Баланс: {balance}
       </div>
       <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
@@ -2783,6 +2799,41 @@ function stopMove(dir) {
                   </div>
               </div>
           </DoubleTapWrapper>
+      <button
+        style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000 }}
+        onClick={() =>
+          setShowInventory(v => {
+            const nv = !v;
+            if (!v) socketRef.current?.emit('economy:getInventory');
+            return nv;
+          })
+        }
+      >
+        Инвентарь
+      </button>
+      {showInventory && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 60,
+            left: 20,
+            zIndex: 1000,
+            background: 'rgba(0,0,0,0.8)',
+            color: '#fff',
+            padding: 10,
+            borderRadius: 8,
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>Инвентарь</h3>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {inventory.map((it) => (
+              <li key={it.id}>
+                {it.name} ×{it.quantity}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
