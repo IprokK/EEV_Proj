@@ -1,0 +1,9 @@
+{
+  "startBalance": 10000,
+  "batchIntervalMs": 300000,
+  "exchangeRates": {
+    "USD": {"USD": 1, "EUR": 0.92, "RUB": 90},
+    "EUR": {"USD": 1.09, "EUR": 1, "RUB": 98},
+    "RUB": {"USD": 0.011, "EUR": 0.0102, "RUB": 1}
+  }
+}
