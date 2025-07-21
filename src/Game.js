@@ -75,6 +75,7 @@ function Game({ avatarUrl, gender }) {
     const [appsHidden, setAppsHidden] = useState(false);
     const [isPhoneVisible, setIsPhoneVisible] = useState(true);
     const [isChatVisible, setIsChatVisible] = useState(true);
+    const [playerCoords, setPlayerCoords] = useState({ x: 0, y: 0, z: 0 });
     const scene = sceneRef.current;
     const playerRef = useRef(null);
     const cityMeshesRef = useRef([]);
@@ -88,6 +89,20 @@ function Game({ avatarUrl, gender }) {
     // группа интерьера создаётся при входе в здание
     const savedPositionRef = useRef(new THREE.Vector3());
     const remotePlayersRef = useRef({});
+
+    useEffect(() => {
+        const id = setInterval(() => {
+            if (playerRef.current) {
+                const p = playerRef.current.position;
+                setPlayerCoords({
+                    x: p.x.toFixed(1),
+                    y: p.y.toFixed(1),
+                    z: p.z.toFixed(1)
+                });
+            }
+        }, 100);
+        return () => clearInterval(id);
+    }, []);
     const handleAppClick = (appName) => {
         setAppsHidden(true);
         setActiveApp(appName);
@@ -1908,6 +1923,9 @@ function stopMove(dir) {
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
+      </div>
+      <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
       </div>
       {/* Кнопка карты мира */}
       <button
