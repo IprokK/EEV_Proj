@@ -5,6 +5,16 @@ const path = require('path');
 const fs = require('fs');
 const app = express();
 
+// Economy services compiled from TypeScript
+const {
+  currencyService,
+  exchangeService,
+  inventoryService,
+  accountService,
+  batchWriter,
+  ledgerService,
+} = require('./dist/economy');
+
 const { virtualWorldPool } = require('./db1');
 
 async function ensureMessagesTable() {
@@ -24,7 +34,45 @@ async function ensureMessagesTable() {
   }
 }
 
+async function ensureEconomyTables() {
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS treasury (
+      id SERIAL PRIMARY KEY,
+      country_code TEXT UNIQUE,
+      balance NUMERIC DEFAULT 0
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS accounts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      currency TEXT,
+      balance NUMERIC
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS transactions (
+      id SERIAL PRIMARY KEY,
+      from_account INTEGER,
+      to_account INTEGER,
+      amount NUMERIC,
+      currency TEXT,
+      type TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS inventory (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      item_id INT,
+      name TEXT,
+      quantity INT,
+      stackable BOOLEAN,
+      weight NUMERIC
+    )`);
+  } catch (e) {
+    console.error('Ошибка создания economy таблиц', e);
+  }
+}
+
 ensureMessagesTable();
+ensureEconomyTables();
+batchWriter.start();
 
 
 app.use(express.json());
@@ -112,6 +160,27 @@ io.on('connection', socket => {
     socket.z = z;
     // Отправляем только игроков этого города
     socket.emit('currentPlayers', playersByCity[cityId]);
+
+    // Economy socket events
+    exchangeService.registerSocket(socket);
+    socket.on('economy:getBalance', async ({ currency }) => {
+      const balance = await accountService.getBalance(socket.userId, currency);
+      socket.emit('economy:balanceChanged', { currency, balance });
+    });
+    socket.on('economy:buyItem', async ({ item, price, currency }) => {
+      try {
+        await accountService.transfer(socket.userId, 0, price, currency, 'purchase');
+        await inventoryService.addItem(socket.userId, item);
+        socket.emit('economy:balanceChanged', {
+          currency,
+          balance: await accountService.getBalance(socket.userId, currency),
+        });
+        socket.emit('economy:transactionRecorded', { type: 'purchase', amount: price });
+      } catch (e) {
+        ledgerService.error('buyItem error ' + e);
+        socket.emit('economy:error', { error: 'purchase failed' });
+      }
+    });
   })();
 
   // --- Новый игрок ---
@@ -549,6 +618,17 @@ app.post('/api/register', async (req, res) => {
   ]);
 
   const user = result.rows[0];
+  // Initialize economy account
+  await accountService.ensureAccount(
+    user.id,
+    currencyService.getCurrencyForCountry('US'),
+    currencyService.config.startBalance
+  );
+  await db.query(
+    `INSERT INTO treasury(country_code)
+     VALUES($1) ON CONFLICT (country_code) DO NOTHING`,
+    ['US']
+  );
   const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
     expiresIn: '12h'
   });

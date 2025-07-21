@@ -9,4 +9,15 @@ const pool = new Pool({
     : false
 });
 
-module.exports = { query: (text, params) => pool.query(text, params) };
+module.exports = {
+  /**
+   * Execute a query on the default pool.
+   * @param {string} text SQL query text
+   * @param {any[]} [params] Query parameters
+   */
+  query: (text, params) => pool.query(text, params),
+  /**
+   * Export the underlying pool for transactions.
+   */
+  pool
+};
