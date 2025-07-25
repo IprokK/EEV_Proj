@@ -51,6 +51,7 @@ function Game({ avatarUrl, gender }) {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
   });
+  const [balance, setBalance] = useState(0);
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -732,6 +733,11 @@ function stopMove(dir) {
     socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
     socket.on('connect_error', err => console.error('Socket connect_error:', err));
     socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
+    const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    socket.emit('economy:getBalance', { userId: profile.id, currency: 'USD' });
+    socket.on('economy:balanceChanged', ({ userId, newBalance }) => {
+      if (userId === profile.id) setBalance(newBalance);
+    });
     const gltfLoader = new GLTFLoader();
     const animLoader = new GLTFLoader();
 
@@ -1923,6 +1929,9 @@ function stopMove(dir) {
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
+      </div>
+      <div style={{ position: 'absolute', top: 50, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Баланс: {balance}
       </div>
       <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}

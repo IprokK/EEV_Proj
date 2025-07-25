@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const db = require('./db');
+const Economy = require('./economy').default;
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -43,6 +44,7 @@ const io = require('socket.io')(http, {
     methods: ['GET', 'POST']
   }
 });
+const economy = new Economy(io, db);
 
 let onlineUsers = {};   
 
@@ -549,6 +551,7 @@ app.post('/api/register', async (req, res) => {
   ]);
 
   const user = result.rows[0];
+  await economy.createAccount(user.id, 'USD');
   const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
     expiresIn: '12h'
   });
