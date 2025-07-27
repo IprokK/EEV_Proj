@@ -65,20 +65,36 @@ class Economy {
   }
 
   async createAccount(userId, currency) {
-    await this.db.query(
-      'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3)',
-      [userId, currency, this.config.startBalance]
+    const res = await this.db.query(
+      'SELECT balance FROM users WHERE id=$1',
+      [userId]
     );
-    this.log('info', `Account created for user ${userId}`);
+    const initial = res.rows[0] ? res.rows[0].balance : this.config.startBalance;
+    await this.db.query(
+      'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3) ON CONFLICT (user_id, currency) DO NOTHING',
+      [userId, currency, initial]
+    );
+    await this.db.query('UPDATE users SET balance=$2 WHERE id=$1', [userId, initial]);
+    this.log('info', `Account created for user ${userId} with balance ${initial}`);
   }
 
   async getBalance(userId, currency) {
     this.log('info', 'getBalance', { userId, currency });
-    const { rows } = await this.db.query(
+    let { rows } = await this.db.query(
       'SELECT balance FROM accounts WHERE user_id=$1 AND currency=$2',
       [userId, currency]
     );
-    return rows[0] ? rows[0].balance : 0;
+    if (rows[0]) return rows[0].balance;
+    const userRes = await this.db.query(
+      'SELECT balance FROM users WHERE id=$1',
+      [userId]
+    );
+    const bal = userRes.rows[0] ? userRes.rows[0].balance : this.config.startBalance;
+    await this.db.query(
+      'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3)',
+      [userId, currency, bal]
+    );
+    return bal;
   }
 
   async transfer(fromUser, toUser, amount, currency, type) {
@@ -94,6 +110,8 @@ class Economy {
         'UPDATE accounts SET balance = balance + $1 WHERE user_id=$2 AND currency=$3 RETURNING balance',
         [amount, toUser, currency]
       );
+      await client.query('UPDATE users SET balance = balance - $1 WHERE id=$2', [amount, fromUser]);
+      await client.query('UPDATE users SET balance = balance + $1 WHERE id=$2', [amount, toUser]);
       await client.query(
         'INSERT INTO transactions(from_account,to_account,amount,currency,type) VALUES($1,$2,$3,$4,$5)',
         [fromUser, toUser, amount, currency, type]

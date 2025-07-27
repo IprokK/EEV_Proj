@@ -478,14 +478,21 @@ app.get('/api/me', authenticate, async (req, res) => {
   const { rows } = await db.query(`
     SELECT
       email,
-      first_name AS "firstName",
-      last_name  AS "lastName",
+      first_name    AS "firstName",
+      last_name     AS "lastName",
       gender,
       age,
       city,
-      avatar_url AS "avatarURL",
+      avatar_url    AS "avatarURL",
       balance,
-      satiery
+      hours_played  AS "hoursPlayed",
+      reputation,
+      phone,
+      sportiness,
+      health_level  AS "healthLevel",
+      stress_level  AS "stressLevel",
+      satiety,
+      diseases
     FROM users
     WHERE id = $1
   `, [userId]);

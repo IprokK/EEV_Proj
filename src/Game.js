@@ -51,7 +51,10 @@ function Game({ avatarUrl, gender }) {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
   });
-  const [balance, setBalance] = useState(0);
+  const [balance, setBalance] = useState(() => {
+    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    return p.balance ?? 0;
+  });
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -736,7 +739,11 @@ function stopMove(dir) {
     const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     socket.emit('economy:getBalance', { userId: profile.id, currency: 'USD' });
     socket.on('economy:balanceChanged', ({ userId, newBalance }) => {
-      if (userId === profile.id) setBalance(newBalance);
+      if (userId === profile.id) {
+        setBalance(newBalance);
+        const upd = { ...(profile || {}), balance: newBalance };
+        sessionStorage.setItem('user_profile', JSON.stringify(upd));
+      }
     });
     const gltfLoader = new GLTFLoader();
     const animLoader = new GLTFLoader();
