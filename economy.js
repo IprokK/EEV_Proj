@@ -1,51 +1,21 @@
-import { Server, Socket } from 'socket.io';
-import { readFileSync } from 'fs';
-import path from 'path';
-import fetch from 'node-fetch';
-import type { Pool } from 'pg';
+const { readFileSync } = require('fs');
+const path = require('path');
+const fetch = require('node-fetch');
 
-interface DBClient {
-  query: (text: string, params?: any[]) => Promise<any>;
-  pool: Pool;
-}
-
-export interface InventoryItem {
-  item_id?: number;
-  name: string;
-  quantity: number;
-  stackable: boolean;
-  weight: number;
-}
-
-interface PendingUpdate {
-  userId: number;
-  health?: number;
-  satiety?: number;
-}
-
-/**
- * Economy system providing account balances, transfers and inventory.
- */
-export default class Economy {
-  private io: Server;
-  private db: DBClient;
-  private config: any;
-  private batch: Map<number, PendingUpdate> = new Map();
-  private interval: NodeJS.Timeout;
-
-  constructor(io: Server, db: DBClient) {
+class Economy {
+  constructor(io, db) {
     this.io = io;
     this.db = db;
     const cfgPath = path.join(__dirname, 'economy', 'config.json');
     this.config = JSON.parse(readFileSync(cfgPath, 'utf8'));
-
+    this.batch = new Map();
     this.initTables().catch(err => this.log('error', 'initTables', err));
     this.ensureTreasuryRows().catch(err => this.log('error', 'ensureTreasury', err));
     this.registerSocketHandlers();
     this.interval = setInterval(() => this.flushBatch(), this.config.batchIntervalMinutes * 60 * 1000);
   }
 
-  private async initTables() {
+  async initTables() {
     await this.db.query(`CREATE TABLE IF NOT EXISTS treasury (
       id SERIAL PRIMARY KEY,
       country_code TEXT UNIQUE,
@@ -80,7 +50,7 @@ export default class Economy {
     );`);
   }
 
-  private async ensureTreasuryRows() {
+  async ensureTreasuryRows() {
     try {
       const { rows } = await this.db.query('SELECT code FROM countries');
       for (const r of rows) {
@@ -94,10 +64,7 @@ export default class Economy {
     }
   }
 
-  /**
-   * Create account for a new user with starting balance from config.
-   */
-  async createAccount(userId: number, currency: string) {
+  async createAccount(userId, currency) {
     await this.db.query(
       'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3)',
       [userId, currency, this.config.startBalance]
@@ -105,22 +72,16 @@ export default class Economy {
     this.log('info', `Account created for user ${userId}`);
   }
 
-  /**
-   * Get account balance.
-   */
-  async getBalance(userId: number, currency: string): Promise<number> {
+  async getBalance(userId, currency) {
     this.log('info', 'getBalance', { userId, currency });
     const { rows } = await this.db.query(
       'SELECT balance FROM accounts WHERE user_id=$1 AND currency=$2',
       [userId, currency]
     );
-    return rows[0]?.balance || 0;
+    return rows[0] ? rows[0].balance : 0;
   }
 
-  /**
-   * Transfer between users.
-   */
-  async transfer(fromUser: number, toUser: number, amount: number, currency: string, type: string) {
+  async transfer(fromUser, toUser, amount, currency, type) {
     this.log('info', 'transfer begin', { fromUser, toUser, amount, currency, type });
     const client = await this.db.pool.connect();
     try {
@@ -138,7 +99,8 @@ export default class Economy {
         [fromUser, toUser, amount, currency, type]
       );
       await client.query('COMMIT');
-      this.io.emit('economy:balanceChanged', { userId: fromUser, currency, newBalance: await this.getBalance(fromUser, currency) });
+      const fromBal = await this.getBalance(fromUser, currency);
+      this.io.emit('economy:balanceChanged', { userId: fromUser, currency, newBalance: fromBal });
       this.io.emit('economy:balanceChanged', { userId: toUser, currency, newBalance: toRes.rows[0].balance });
       this.io.emit('economy:transactionRecorded', { fromUser, toUser, amount, currency, type });
     } catch (e) {
@@ -150,10 +112,7 @@ export default class Economy {
     }
   }
 
-  /**
-   * Convert between currencies using static rates from config.
-   */
-  convert(amount: number, fromCurrency: string, toCurrency: string): number {
+  convert(amount, fromCurrency, toCurrency) {
     this.log('info', 'convert request', { amount, fromCurrency, toCurrency });
     this.io.emit('economy:exchangeRateRequested', { fromCurrency, toCurrency });
     const rates = this.config.exchangeRates;
@@ -163,8 +122,7 @@ export default class Economy {
     return result;
   }
 
-  /** Add item to user inventory */
-  async addItem(userId: number, item: InventoryItem) {
+  async addItem(userId, item) {
     await this.db.query(
       `INSERT INTO inventory(user_id, item_id, name, quantity, stackable, weight)
        VALUES($1,$2,$3,$4,$5,$6)
@@ -174,8 +132,7 @@ export default class Economy {
     this.log('info', 'addItem', { userId, item });
   }
 
-  /** Remove item from user inventory */
-  async removeItem(userId: number, itemId: number, quantity: number) {
+  async removeItem(userId, itemId, quantity) {
     await this.db.query(
       `UPDATE inventory SET quantity = GREATEST(quantity - $3,0) WHERE user_id=$1 AND item_id=$2`,
       [userId, itemId, quantity]
@@ -184,19 +141,17 @@ export default class Economy {
     this.log('info', 'removeItem', { userId, itemId, quantity });
   }
 
-  /** Get inventory list */
-  async getInventory(userId: number): Promise<InventoryItem[]> {
+  async getInventory(userId) {
     const { rows } = await this.db.query('SELECT * FROM inventory WHERE user_id=$1', [userId]);
     return rows;
   }
 
-  /** Schedule flush of non-critical updates */
-  queueUpdate(update: PendingUpdate) {
-    const existing = this.batch.get(update.userId) || {} as PendingUpdate;
+  queueUpdate(update) {
+    const existing = this.batch.get(update.userId) || {};
     this.batch.set(update.userId, { ...existing, ...update });
   }
 
-  private async flushBatch() {
+  async flushBatch() {
     for (const upd of this.batch.values()) {
       try {
         await this.db.query(
@@ -210,25 +165,29 @@ export default class Economy {
     this.batch.clear();
   }
 
-  private registerSocketHandlers() {
-    this.io.on('connection', (socket: Socket) => {
+  registerSocketHandlers() {
+    this.io.on('connection', socket => {
       socket.on('economy:getBalance', async ({ userId, currency }) => {
         const bal = await this.getBalance(userId, currency);
         socket.emit('economy:balanceChanged', { userId, currency, newBalance: bal });
       });
-      socket.on('economy:transfer', async (data) => {
+
+      socket.on('economy:transfer', async data => {
         try {
           await this.transfer(data.fromUser, data.toUser, data.amount, data.currency, data.type);
         } catch (e) {
           socket.emit('economy:error', { message: 'transfer failed' });
         }
       });
+
       socket.on('economy:buyItem', async ({ userId, item }) => {
         await this.addItem(userId, item);
       });
+
       socket.on('economy:getInventory', async ({ userId }) => {
         socket.emit('economy:inventory', await this.getInventory(userId));
       });
+
       socket.on('economy:exchange', ({ amount, fromCurrency, toCurrency }) => {
         const result = this.convert(amount, fromCurrency, toCurrency);
         socket.emit('economy:exchangeResult', { result });
@@ -236,7 +195,7 @@ export default class Economy {
     });
   }
 
-  private async log(level: string, message: string, meta?: any) {
+  async log(level, message, meta) {
     const entry = { level, message, meta, timestamp: new Date().toISOString() };
     console[level === 'error' ? 'error' : 'log'](`[Economy] ${message}`, meta || '');
     try {
@@ -250,3 +209,5 @@ export default class Economy {
     }
   }
 }
+
+module.exports = Economy;

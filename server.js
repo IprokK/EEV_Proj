@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const db = require('./db');
-const Economy = require('./economy').default;
+const Economy = require('./economy');
 const path = require('path');
 const fs = require('fs');
 const app = express();
