@@ -9,6 +9,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
+import OrgControlPanel from './components/OrgControlPanel';
 
 function Game({ avatarUrl, gender }) {
 
@@ -47,6 +48,7 @@ function Game({ avatarUrl, gender }) {
   const [playerStats, setPlayerStats] = useState(null);
   const [micEnabled, setMicEnabled] = useState(false);
   const [orgMenu, setOrgMenu] = useState(null);
+  const [orgPanelId, setOrgPanelId] = useState(null);
   const [satiety, setSatiety] = useState(() => {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
@@ -538,27 +540,30 @@ function Game({ avatarUrl, gender }) {
 }
 
 
-  async function openOrganizationMenu(objectId) {
+  async function openOrganizationMenu(orgId) {
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(
-        `/api/organizations/by-object/${objectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) {
-        throw new Error(`status ${res.status}`);
-      }
-      const data = await res.json();
-      setOrgMenu(data);
+      const orgRes = await fetch(`/api/organizations/${orgId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!orgRes.ok) throw new Error(`status ${orgRes.status}`);
+      const org = await orgRes.json();
+      const setRes = await fetch(`/api/organizations/${orgId}/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const settings = setRes.ok ? await setRes.json() : {};
+      setOrgMenu({ id: orgId, name: org.name, menu: settings.menu || {} });
       setSelectedHouse(null);
     } catch (e) {
-      console.error(
-        'Не удалось загрузить меню организации для объекта',
-        objectId,
-        e
-      )
+      console.error('Не удалось загрузить меню организации', orgId, e);
       alert('Ошибка загрузки меню организации');
     }
+  }
+
+  function openOrganizationPanel(orgId) {
+    setOrgPanelId(orgId);
+    setOrgMenu(null);
+    setSelectedHouse(null);
   }
 
 
@@ -1563,7 +1568,7 @@ function stopMove(dir) {
           let obj = houseHit[0].object;
           while (obj && !obj.userData.id && !obj.userData.interiorId) obj = obj.parent;
           if (obj && obj.userData.id) {
-            setSelectedHouse(obj.userData.id);
+            setSelectedHouse(obj.userData);
             return;
           }
           if (obj && obj.userData.interiorId) {
@@ -2010,7 +2015,7 @@ function stopMove(dir) {
           zIndex: 1000
         }}>
           <button
-            onClick={() => enterInterior(selectedHouse)}
+            onClick={() => enterInterior(selectedHouse.id)}
             style={{
               fontSize: '18px',
               padding: '8px 16px',
@@ -2107,10 +2112,14 @@ function stopMove(dir) {
             <b>Налог:</b> {selectedHouse.tax}
           </p>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <button onClick={() => enterHouse(selectedHouse)}
-                    style={btnStyle}>Войти</button>
-            <button onClick={() => viewStats(selectedHouse)}
-                    style={btnStyle}>Статистика</button>
+              <button onClick={() => enterHouse(selectedHouse)} style={btnStyle}>Войти</button>
+            <button onClick={() => viewStats(selectedHouse)} style={btnStyle}>Статистика</button>
+            {selectedHouse.organizationId && (
+              <>
+                <button onClick={() => openOrganizationMenu(selectedHouse.organizationId)} style={btnStyle}>Меню</button>
+                <button onClick={() => openOrganizationPanel(selectedHouse.organizationId)} style={btnStyle}>Управление</button>
+              </>
+            )}
           </div>
         </div>
           )}
@@ -2349,6 +2358,10 @@ function stopMove(dir) {
           ))}
           <button onClick={() => setOrgMenu(null)} style={{ marginTop: 8 }}>Закрыть</button>
         </div>
+      )}
+
+      {orgPanelId && (
+        <OrgControlPanel orgId={orgPanelId} onClose={() => setOrgPanelId(null)} />
       )}
 
       <DoubleTapWrapper
