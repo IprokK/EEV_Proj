@@ -5,6 +5,7 @@ const Economy = require('./economy');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+const organizationsRouter = require('./server/organizations');
 
 const { virtualWorldPool } = require('./db1');
 
@@ -30,6 +31,7 @@ ensureMessagesTable();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/api/organizations', organizationsRouter);
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -811,31 +813,6 @@ app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res)
 });
 
 
-// Покупка товара в организации
-app.post('/api/organizations/:id/purchase', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const { itemKey } = req.body;
-  try {
-    const { rows } = await db.query(
-      'SELECT menu FROM organization_settings WHERE organization_id = $1',
-      [id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Организация не найдена' });
-    const menu = rows[0].menu || {};
-    const item = menu[itemKey];
-    if (!item) return res.status(400).json({ error: 'Товар не найден' });
-    const price = item.price || 0;
-    const satiety = item.satiety || 0;
-    const upd = await db.query(
-      'UPDATE users SET balance = balance - $1, satiety = LEAST(satiety + $2, 100) WHERE id = $3 RETURNING satiety',
-      [price, satiety, req.user.id]
-    );
-    res.json({ success: true, satiety: upd.rows[0].satiety });
-  } catch (e) {
-    console.error('purchase error', e);
-    res.status(500).json({ error: 'Ошибка покупки' });
-  }
-});
 
 
 // Сохранить текущую карту в текстовый файл
