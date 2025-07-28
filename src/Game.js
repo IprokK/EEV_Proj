@@ -10,6 +10,7 @@ import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
 import OrgControlPanel from './components/OrgControlPanel';
+import Inventory from './components/Inventory';
 
 function Game({ avatarUrl, gender }) {
 
@@ -53,10 +54,33 @@ function Game({ avatarUrl, gender }) {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
   });
+  const [thirst, setThirst] = useState(() => {
+    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    return p.thirst ?? 100;
+  });
+  const [inventory, setInventory] = useState([]);
+  const [showInventory, setShowInventory] = useState(false);
+  const [gameTime, setGameTime] = useState('');
   const [balance, setBalance] = useState(() => {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.balance ?? 0;
   });
+
+  useEffect(() => {
+    const decay = setInterval(() => {
+      setSatiety(s => Math.max(0, s - 0.05));
+      setThirst(t => Math.max(0, t - 0.07));
+    }, 10000);
+    return () => clearInterval(decay);
+  }, []);
+
+  useEffect(() => {
+    const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    profile.satiety = satiety;
+    profile.thirst = thirst;
+    sessionStorage.setItem('user_profile', JSON.stringify(profile));
+    socketRef.current?.emit('economy:updateStats', { satiety, thirst });
+  }, [satiety, thirst]);
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -610,10 +634,31 @@ function stopMove(dir) {
     if (res.ok) {
       const data = await res.json();
       setSatiety(data.satiety);
+      setThirst(data.thirst);
+      setBalance(data.balance);
       const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
       profile.satiety = data.satiety;
+      profile.thirst = data.thirst;
+      profile.balance = data.balance;
       sessionStorage.setItem('user_profile', JSON.stringify(profile));
+      socketRef.current.emit('economy:getInventory', { userId: profile.id });
     }
+  }
+
+  function handleItemAction(item) {
+    const act = window.prompt('1 - использовать, 2 - выкинуть');
+    const prof = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    if (act === '1') {
+      if (item.name.toLowerCase().includes('вода')) {
+        setThirst(t => Math.min(100, t + 20));
+      } else {
+        setSatiety(s => Math.min(100, s + 20));
+      }
+      socketRef.current.emit('economy:removeItem', { userId: prof.id, itemId: item.item_id, quantity: 1 });
+    } else if (act === '2') {
+      socketRef.current.emit('economy:removeItem', { userId: prof.id, itemId: item.item_id, quantity: 1 });
+    }
+    socketRef.current.emit('economy:getInventory', { userId: prof.id });
   }
   function toggleWorldVisibility(visible) {
     groundRef.current && (groundRef.current.visible = visible);
@@ -750,6 +795,9 @@ function stopMove(dir) {
         sessionStorage.setItem('user_profile', JSON.stringify(upd));
       }
     });
+    socket.emit('economy:getInventory', { userId: profile.id });
+    socket.on('economy:inventory', setInventory);
+    socket.on('gameTime:update', ({ time }) => setGameTime(time));
     const gltfLoader = new GLTFLoader();
     const animLoader = new GLTFLoader();
 
@@ -1630,6 +1678,11 @@ function stopMove(dir) {
         if (k === 'arrowleft' || k === 'a') startMove('left');
         if (k === 'arrowright' || k === 'd') startMove('right');
       }
+      if (event.key.toLowerCase() === 'i') {
+        const prof = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        socket.emit('economy:getInventory', { userId: prof.id });
+        setShowInventory(v => !v);
+      }
       destination = null;
       destinationMarker.visible = false;
     }
@@ -1943,10 +1996,16 @@ function stopMove(dir) {
         Сытость: {satiety}
       </div>
       <div style={{ position: 'absolute', top: 50, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Жажда: {thirst}
+      </div>
+      <div style={{ position: 'absolute', top: 80, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Баланс: {balance}
       </div>
       <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
+      </div>
+      <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        {new Date(gameTime).toLocaleString()}
       </div>
       {/* Кнопка карты мира */}
       <button
@@ -2341,8 +2400,9 @@ function stopMove(dir) {
       {orgMenu && (
         <div style={{
           position: 'absolute',
-          top: 20,
-          right: 20,
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
           background: 'rgba(0,0,0,0.8)',
           color: '#fff',
           padding: 16,
@@ -2362,6 +2422,10 @@ function stopMove(dir) {
 
       {orgPanelId && (
         <OrgControlPanel orgId={orgPanelId} onClose={() => setOrgPanelId(null)} />
+      )}
+
+      {showInventory && (
+        <Inventory items={inventory} onUse={handleItemAction} />
       )}
 
       <DoubleTapWrapper

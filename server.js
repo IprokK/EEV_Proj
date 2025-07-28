@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const db = require('./db');
 const Economy = require('./economy');
+const GameTime = require('./gameTime');
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -47,6 +48,7 @@ const io = require('socket.io')(http, {
   }
 });
 const economy = new Economy(io, db);
+const gameTime = new GameTime(io, 8);
 
 let onlineUsers = {};   
 
@@ -494,6 +496,7 @@ app.get('/api/me', authenticate, async (req, res) => {
       health_level  AS "healthLevel",
       stress_level  AS "stressLevel",
       satiety,
+      thirst,
       diseases
     FROM users
     WHERE id = $1
@@ -532,9 +535,10 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
        phone,
        sportiness,
        health_level  AS "healthLevel",
-       stress_level  AS "stressLevel",
-       satiety,
-       diseases
+      stress_level  AS "stressLevel",
+      satiety,
+      thirst,
+      diseases
      FROM users
      WHERE id = $1
    `, [dbId]);

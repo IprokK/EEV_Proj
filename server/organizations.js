@@ -132,24 +132,44 @@ router.put('/:id/settings', async (req, res) => {
 
 router.post('/:id/purchase', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { item, price, hungerGain = 0 } = req.body;
+  const { itemKey } = req.body;
   try {
+    const menuRes = await db.query('SELECT menu FROM organization_settings WHERE organization_id=$1', [id]);
+    const menu = menuRes.rows[0]?.menu || {};
+    const item = menu[itemKey];
+    if (!item) return res.status(400).json({ error: 'invalid item' });
+
+    const price = parseFloat(item.price);
+    const hungerGain = item.hungerGain || 0;
+    const thirstGain = item.thirstGain || 0;
+
+    const { rows } = await db.query('SELECT balance, satiety, thirst FROM users WHERE id=$1', [req.user.id]);
+    let balance = parseFloat(rows[0].balance);
+    let satiety = parseFloat(rows[0].satiety ?? 100);
+    let thirst = parseFloat(rows[0].thirst ?? 100);
+    if (balance < price) return res.status(400).json({ error: 'insufficient funds' });
+
     await db.query('BEGIN');
-    const { rows } = await db.query('SELECT balance, hunger FROM users WHERE id=$1', [req.user.id]);
-    const balance = parseFloat(rows[0].balance);
-    const currentHunger = parseFloat(rows[0].hunger);
-    if (balance < price) {
-      await db.query('ROLLBACK');
-      return res.status(400).json({ error: 'insufficient funds' });
-    }
-    await db.query('UPDATE users SET balance = balance - $1, hunger = LEAST(100, hunger + $2) WHERE id=$3', [price, hungerGain, req.user.id]);
+    await db.query(
+      'UPDATE users SET balance = balance - $1, satiety = LEAST(100, COALESCE(satiety,100)+$2), thirst = LEAST(100, COALESCE(thirst,100)+$3) WHERE id=$4',
+      [price, hungerGain, thirstGain, req.user.id]
+    );
     await db.query(
       `INSERT INTO organization_orders(organization_id, user_id, item, price)
        VALUES($1,$2,$3,$4)`,
-      [id, req.user.id, item, price]
+      [id, req.user.id, item.title, price]
+    );
+    await db.query(
+      `INSERT INTO inventory(user_id, item_id, name, quantity, stackable, weight)
+       VALUES($1,$2,$3,1,true,1)
+       ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = inventory.quantity + 1`,
+      [req.user.id, itemKey, item.title]
     );
     await db.query('COMMIT');
-    res.json({ success: true, newBalance: balance - price, newHunger: Math.min(100, currentHunger + hungerGain) });
+    balance -= price;
+    satiety = Math.min(100, satiety + hungerGain);
+    thirst = Math.min(100, thirst + thirstGain);
+    res.json({ success: true, balance, satiety, thirst });
   } catch (err) {
     await db.query('ROLLBACK');
     console.error(err);

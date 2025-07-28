@@ -48,6 +48,13 @@ class Economy {
       stackable BOOLEAN,
       weight NUMERIC
     );`);
+
+    await this.db.query(
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS satiety NUMERIC DEFAULT 100'
+    );
+    await this.db.query(
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS thirst NUMERIC DEFAULT 100'
+    );
   }
 
   async ensureTreasuryRows() {
@@ -173,8 +180,8 @@ class Economy {
     for (const upd of this.batch.values()) {
       try {
         await this.db.query(
-          'UPDATE users SET health_level = COALESCE($2, health_level), satiety = COALESCE($3, satiety) WHERE id=$1',
-          [upd.userId, upd.health, upd.satiety]
+          'UPDATE users SET health_level = COALESCE($2, health_level), satiety = COALESCE($3, satiety), thirst = COALESCE($4, thirst) WHERE id=$1',
+          [upd.userId, upd.health, upd.satiety, upd.thirst]
         );
       } catch (e) {
         this.log('error', 'flushBatch error', e);
@@ -204,6 +211,15 @@ class Economy {
 
       socket.on('economy:getInventory', async ({ userId }) => {
         socket.emit('economy:inventory', await this.getInventory(userId));
+      });
+
+      socket.on('economy:removeItem', async ({ userId, itemId, quantity }) => {
+        await this.removeItem(userId, itemId, quantity);
+        socket.emit('economy:inventory', await this.getInventory(userId));
+      });
+
+      socket.on('economy:updateStats', data => {
+        this.queueUpdate({ userId: socket.userId, ...data });
       });
 
       socket.on('economy:exchange', ({ amount, fromCurrency, toCurrency }) => {
