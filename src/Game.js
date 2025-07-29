@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { SkeletonUtils } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
@@ -154,6 +155,9 @@ function Game({ avatarUrl, gender }) {
         }
     };
     const loader = new GLTFLoader();
+    const gltfCache = {};
+    let lastVisibilityCheck = 0;
+    const VISIBILITY_CHECK_INTERVAL = 500; // ms
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -161,8 +165,26 @@ function Game({ avatarUrl, gender }) {
     );
 
     async function loadGLTF(url) {
+      if (gltfCache[url]) {
+        const cached = gltfCache[url];
+        return {
+          scene: SkeletonUtils.clone(cached.scene),
+          animations: cached.animations
+        };
+      }
       return new Promise((resolve, reject) => {
-        loader.load(url, gltf => resolve(gltf), undefined, err => reject(err));
+        loader.load(
+          url,
+          gltf => {
+            gltfCache[url] = gltf;
+            resolve({
+              scene: SkeletonUtils.clone(gltf.scene),
+              animations: gltf.animations
+            });
+          },
+          undefined,
+          err => reject(err)
+        );
       });
     }
 
@@ -805,11 +827,26 @@ function stopMove(dir) {
     const animLoader = new GLTFLoader();
 
     async function loadPlayerModel(avatarUrl) {
+      if (gltfCache[avatarUrl]) {
+        const cached = gltfCache[avatarUrl];
+        return {
+          scene: SkeletonUtils.clone(cached.scene),
+          animations: cached.animations
+        };
+      }
       return new Promise((resolve, reject) => {
-        gltfLoader.load(avatarUrl, (gltf) => {
-          if (!gltf.scene) return reject('GLTF.scene отсутствует');
-          resolve(gltf);
-        }, undefined, (err) => reject(err));
+        gltfLoader.load(
+          avatarUrl,
+          gltf => {
+            gltfCache[avatarUrl] = gltf;
+            resolve({
+              scene: SkeletonUtils.clone(gltf.scene),
+              animations: gltf.animations
+            });
+          },
+          undefined,
+          err => reject(err)
+        );
       });
     }
 
@@ -1311,7 +1348,7 @@ function stopMove(dir) {
         ];
         for (const npc of npcData) {
             try {
-                const gltf = await gltfLoader.loadAsync(npc.model);
+                const gltf = await loadGLTF(npc.model);
                 const model = gltf.scene;
                 model.position.set(...npc.position);
                 model.userData.npcId = npc.id;
@@ -1500,40 +1537,38 @@ function stopMove(dir) {
       });
     }
 
-    function loadCityObject(obj) {
-      gltfLoader.load(
-        obj.model_url,
-        (gltf) => {
-          const model = gltf.scene;
-          model.userData = {
-            id: obj.id,
-            type: obj.name,
-            organizationId: obj.organization_id,
-            rent: obj.rent,
-            tax: obj.tax
-          };
-          model.scale.set(1, 1, 1);
-          model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
-          model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
-          model.traverse(child => {
-            if (child.isMesh) {
-              child.material = customMaterial.clone();
-              child.material.needsUpdate = true;
-            }
-          });
-          scene.add(model);
-          cityMeshesRef.current.push(model);
-          const boundingBox = new THREE.Box3().setFromObject(model);
-          const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
-          if (isCollidable) {
-            obstacles.push({ mesh: model, box: boundingBox });
+    async function loadCityObject(obj) {
+      try {
+        const gltf = await loadGLTF(obj.model_url);
+        const model = gltf.scene;
+        model.userData = {
+          id: obj.id,
+          type: obj.name,
+          organizationId: obj.organization_id,
+          rent: obj.rent,
+          tax: obj.tax
+        };
+        model.scale.set(1, 1, 1);
+        model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
+        model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
+        model.traverse(child => {
+          if (child.isMesh) {
+            child.material = customMaterial.clone();
+            child.material.needsUpdate = true;
           }
-          loadedCityObjectsRef.current[obj.id] = { mesh: model, data: obj };
-          buildPathfindingGrid();
-        },
-        undefined,
-        (error) => console.error('Ошибка загрузки объекта', obj.name, error)
-      );
+        });
+        scene.add(model);
+        cityMeshesRef.current.push(model);
+        const boundingBox = new THREE.Box3().setFromObject(model);
+        const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
+        if (isCollidable) {
+          obstacles.push({ mesh: model, box: boundingBox });
+        }
+        loadedCityObjectsRef.current[obj.id] = { mesh: model, data: obj };
+        buildPathfindingGrid();
+      } catch (error) {
+        console.error('Ошибка загрузки объекта', obj.name, error);
+      }
     }
 
     function unloadCityObject(id) {
@@ -1548,6 +1583,9 @@ function stopMove(dir) {
     }
 
     function updateCityObjectVisibility() {
+      const now = performance.now();
+      if (now - lastVisibilityCheck < VISIBILITY_CHECK_INTERVAL) return;
+      lastVisibilityCheck = now;
       if (!player) return;
       const p = player.position;
       cityObjectsDataRef.current.forEach(obj => {
