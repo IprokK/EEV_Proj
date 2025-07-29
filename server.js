@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const db = require('./db');
 const Economy = require('./economy');
 const GameTime = require('./gameTime');
@@ -27,7 +28,7 @@ async function ensureMessagesTable() {
 }
 
 ensureMessagesTable();
-
+app.use(compression());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

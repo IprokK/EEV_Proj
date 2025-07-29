@@ -19,7 +19,8 @@
     "react-scripts": "5.0.1",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.6.1",
-    "three": "0.166.1"
+    "three": "0.166.1",
+    "compression": "^1.7.4"
   },
   "scripts": {
     "start": "react-scripts start",

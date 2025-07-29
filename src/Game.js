@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+THREE.Cache.enabled = true;
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
@@ -153,7 +154,9 @@ function Game({ avatarUrl, gender }) {
             console.error('Ошибка загрузки диалога:', error);
         }
     };
-    const loader = new GLTFLoader();
+    const loadingManager = useRef(new THREE.LoadingManager()).current;
+    const loader = useRef(new GLTFLoader(loadingManager)).current;
+    const modelCache = useRef({}).current;
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -161,9 +164,13 @@ function Game({ avatarUrl, gender }) {
     );
 
     async function loadGLTF(url) {
-      return new Promise((resolve, reject) => {
-        loader.load(url, gltf => resolve(gltf), undefined, err => reject(err));
-      });
+      if (modelCache[url]) {
+        const cached = modelCache[url];
+        return { ...cached, scene: cached.scene.clone(true) };
+      }
+      const gltf = await loader.loadAsync(url);
+      modelCache[url] = gltf;
+      return { ...gltf, scene: gltf.scene.clone(true) };
     }
 
     async function loadInteriorScene(interiorId) {
@@ -771,6 +778,7 @@ function stopMove(dir) {
     let pathfinderGrid;
     let currentPath = [];
     let pathIndex = 0;
+    let visibilityCounter = 0;
     let groundPlane;
     let destinationMarker;
     let customMaterial;
@@ -801,16 +809,19 @@ function stopMove(dir) {
     socket.emit('economy:getInventory', { userId: profile.id });
     socket.on('economy:inventory', setInventory);
     socket.on('gameTime:update', ({ time }) => setGameTime(time));
-    const gltfLoader = new GLTFLoader();
+    const gltfLoader = useRef(new GLTFLoader()).current;
     const animLoader = new GLTFLoader();
+    const playerCache = useRef({}).current;
 
     async function loadPlayerModel(avatarUrl) {
-      return new Promise((resolve, reject) => {
-        gltfLoader.load(avatarUrl, (gltf) => {
-          if (!gltf.scene) return reject('GLTF.scene отсутствует');
-          resolve(gltf);
-        }, undefined, (err) => reject(err));
-      });
+      if (playerCache[avatarUrl]) {
+        const cached = playerCache[avatarUrl];
+        return { ...cached, scene: cached.scene.clone(true) };
+      }
+      const gltf = await gltfLoader.loadAsync(avatarUrl);
+      if (!gltf.scene) throw new Error('GLTF.scene отсутствует');
+      playerCache[avatarUrl] = gltf;
+      return { ...gltf, scene: gltf.scene.clone(true) };
     }
 
     async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
@@ -1899,7 +1910,10 @@ function stopMove(dir) {
       updateFirstPersonMovement(delta);
       if (mixer) mixer.update(delta);
       updateTransparency();
-      updateCityObjectVisibility();
+      if (visibilityCounter-- <= 0) {
+        updateCityObjectVisibility();
+        visibilityCounter = 10;
+      }
       updateCameraFollow();
       for (let id in remotePlayers) {
         const r = remotePlayers[id];
