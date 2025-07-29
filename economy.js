@@ -72,36 +72,23 @@ class Economy {
   }
 
   async createAccount(userId, currency) {
-    const res = await this.db.query(
-      'SELECT balance FROM users WHERE id=$1',
-      [userId]
-    );
-    const initial = res.rows[0] ? res.rows[0].balance : this.config.startBalance;
+    const res = await this.db.query('SELECT balance FROM users WHERE id=$1', [userId]);
+    const initial = res.rows[0] ? parseFloat(res.rows[0].balance) : this.config.startBalance;
+    if (!res.rows.length) return;
+    if (res.rows[0].balance == null) {
+      await this.db.query('UPDATE users SET balance=$2 WHERE id=$1', [userId, initial]);
+    }
     await this.db.query(
       'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3) ON CONFLICT (user_id, currency) DO NOTHING',
       [userId, currency, initial]
     );
-    await this.db.query('UPDATE users SET balance=$2 WHERE id=$1', [userId, initial]);
-    this.log('info', `Account created for user ${userId} with balance ${initial}`);
+    this.log('info', `Account ensured for user ${userId} with balance ${initial}`);
   }
 
   async getBalance(userId, currency) {
     this.log('info', 'getBalance', { userId, currency });
-    let { rows } = await this.db.query(
-      'SELECT balance FROM accounts WHERE user_id=$1 AND currency=$2',
-      [userId, currency]
-    );
-    if (rows[0]) return rows[0].balance;
-    const userRes = await this.db.query(
-      'SELECT balance FROM users WHERE id=$1',
-      [userId]
-    );
-    const bal = userRes.rows[0] ? userRes.rows[0].balance : this.config.startBalance;
-    await this.db.query(
-      'INSERT INTO accounts(user_id, currency, balance) VALUES($1,$2,$3)',
-      [userId, currency, bal]
-    );
-    return bal;
+    const { rows } = await this.db.query('SELECT balance FROM users WHERE id=$1', [userId]);
+    return rows[0] ? parseFloat(rows[0].balance) : 0;
   }
 
   async transfer(fromUser, toUser, amount, currency, type) {
@@ -109,23 +96,20 @@ class Economy {
     const client = await this.db.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
-        'UPDATE accounts SET balance = balance - $1 WHERE user_id=$2 AND currency=$3',
-        [amount, fromUser, currency]
+      const fromRes = await client.query(
+        'UPDATE users SET balance = balance - $1 WHERE id=$2 RETURNING balance',
+        [amount, fromUser]
       );
       const toRes = await client.query(
-        'UPDATE accounts SET balance = balance + $1 WHERE user_id=$2 AND currency=$3 RETURNING balance',
-        [amount, toUser, currency]
+        'UPDATE users SET balance = balance + $1 WHERE id=$2 RETURNING balance',
+        [amount, toUser]
       );
-      await client.query('UPDATE users SET balance = balance - $1 WHERE id=$2', [amount, fromUser]);
-      await client.query('UPDATE users SET balance = balance + $1 WHERE id=$2', [amount, toUser]);
       await client.query(
         'INSERT INTO transactions(from_account,to_account,amount,currency,type) VALUES($1,$2,$3,$4,$5)',
         [fromUser, toUser, amount, currency, type]
       );
       await client.query('COMMIT');
-      const fromBal = await this.getBalance(fromUser, currency);
-      this.io.emit('economy:balanceChanged', { userId: fromUser, currency, newBalance: fromBal });
+      this.io.emit('economy:balanceChanged', { userId: fromUser, currency, newBalance: fromRes.rows[0].balance });
       this.io.emit('economy:balanceChanged', { userId: toUser, currency, newBalance: toRes.rows[0].balance });
       this.io.emit('economy:transactionRecorded', { fromUser, toUser, amount, currency, type });
     } catch (e) {
@@ -192,9 +176,9 @@ class Economy {
 
   registerSocketHandlers() {
     this.io.on('connection', socket => {
-      socket.on('economy:getBalance', async ({ userId, currency }) => {
-        const bal = await this.getBalance(userId, currency);
-        socket.emit('economy:balanceChanged', { userId, currency, newBalance: bal });
+      socket.on('economy:getBalance', async ({ userId }) => {
+        const bal = await this.getBalance(userId);
+        socket.emit('economy:balanceChanged', { userId, newBalance: bal });
       });
 
       socket.on('economy:transfer', async data => {

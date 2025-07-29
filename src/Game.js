@@ -787,7 +787,10 @@ function stopMove(dir) {
     socket.on('connect_error', err => console.error('Socket connect_error:', err));
     socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
     const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-    socket.emit('economy:getBalance', { userId: profile.id, currency: 'USD' });
+    socket.emit('economy:getBalance', { userId: profile.id });
+    const balanceInterval = setInterval(() => {
+      socket.emit('economy:getBalance', { userId: profile.id });
+    }, 3000);
     socket.on('economy:balanceChanged', ({ userId, newBalance }) => {
       if (userId === profile.id) {
         setBalance(newBalance);
@@ -1931,6 +1934,7 @@ function stopMove(dir) {
     window.addEventListener('resize', onWindowResize, false);
 
     return () => {
+      clearInterval(balanceInterval);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);

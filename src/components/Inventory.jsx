@@ -14,14 +14,22 @@ export default function Inventory({ items = [], onUse }) {
       zIndex: 1000
     }}>
       <h3 style={{ marginTop: 0 }}>Инвентарь</h3>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {items.map(it => (
-          <div key={it.item_id} onClick={() => onUse(it)} style={{ width: 64, height: 64, background: 'rgba(255,255,255,0.1)', position: 'relative', cursor: 'pointer' }}>
-            <span style={{ position: 'absolute', bottom: 2, right: 4, fontSize: 12 }}>{it.quantity}</span>
-            {it.icon && <img src={it.icon} alt={it.name} style={{ maxWidth: '100%', maxHeight: '100%' }} />}
-          </div>
-        ))}
-      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', paddingBottom: 4 }}>Предмет</th>
+            <th style={{ textAlign: 'right', paddingBottom: 4 }}>Кол-во</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(it => (
+            <tr key={it.item_id} onClick={() => onUse(it)} style={{ cursor: 'pointer' }}>
+              <td style={{ paddingRight: 12 }}>{it.name}</td>
+              <td style={{ textAlign: 'right' }}>{it.quantity}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
