@@ -6,7 +6,6 @@ const GameTime = require('./gameTime');
 const path = require('path');
 const fs = require('fs');
 const app = express();
-const organizationsRouter = require('./server/organizations');
 
 const { virtualWorldPool } = require('./db1');
 
@@ -32,7 +31,6 @@ ensureMessagesTable();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/api/organizations', organizationsRouter);
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -50,7 +48,10 @@ const io = require('socket.io')(http, {
 const economy = new Economy(io, db);
 const gameTime = new GameTime(io, 8);
 
-let onlineUsers = {};   
+let onlineUsers = {};
+
+const organizationsRouter = require('./server/organizations')(io, onlineUsers);
+app.use('/api/organizations', organizationsRouter);
 
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;

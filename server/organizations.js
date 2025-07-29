@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const jwt = require('jsonwebtoken');
 
+module.exports = function(io, onlineUsers) {
 const router = express.Router();
 
 function authenticate(req, res, next) {
@@ -136,39 +137,56 @@ router.post('/:id/purchase', authenticate, async (req, res) => {
   try {
     const menuRes = await db.query('SELECT menu FROM organization_settings WHERE organization_id=$1', [id]);
     const menu = menuRes.rows[0]?.menu || {};
-    const item = menu[itemKey];
-    if (!item) return res.status(400).json({ error: 'invalid item' });
+    const entry = menu[itemKey];
+    if (!entry) return res.status(400).json({ error: 'invalid item' });
 
-    const price = parseFloat(item.price);
-    const hungerGain = item.hungerGain || 0;
-    const thirstGain = item.thirstGain || 0;
+    let itemDef;
+    if (entry.itemId) {
+      const r = await db.query('SELECT * FROM items WHERE id=$1', [entry.itemId]);
+      itemDef = r.rows[0];
+    } else {
+      const r = await db.query('SELECT * FROM items WHERE key=$1', [itemKey]);
+      itemDef = r.rows[0];
+    }
+    if (!itemDef) return res.status(400).json({ error: 'item not found' });
 
+    const price = parseFloat(entry.price);
     const { rows } = await db.query('SELECT balance, satiety, thirst FROM users WHERE id=$1', [req.user.id]);
     let balance = parseFloat(rows[0].balance);
     let satiety = parseFloat(rows[0].satiety ?? 100);
     let thirst = parseFloat(rows[0].thirst ?? 100);
-    if (balance < price) return res.status(400).json({ error: 'insufficient funds' });
+
+    if (balance < price) {
+      const sock = onlineUsers[req.user.id];
+      if (sock) io.to(sock).emit('chatMessage', { playerId: 0, name: 'Система', message: `Вам недостаточно средств для покупки ${itemDef.name}` });
+      return res.status(400).json({ error: 'insufficient funds' });
+    }
 
     await db.query('BEGIN');
     await db.query(
       'UPDATE users SET balance = balance - $1, satiety = LEAST(100, COALESCE(satiety,100)+$2), thirst = LEAST(100, COALESCE(thirst,100)+$3) WHERE id=$4',
-      [price, hungerGain, thirstGain, req.user.id]
+      [price, itemDef.hunger_gain, itemDef.thirst_gain, req.user.id]
     );
     await db.query(
       `INSERT INTO organization_orders(organization_id, user_id, item, price)
        VALUES($1,$2,$3,$4)`,
-      [id, req.user.id, item.title, price]
+      [id, req.user.id, itemDef.name, price]
     );
     await db.query(
       `INSERT INTO inventory(user_id, item_id, name, quantity, stackable, weight)
-       VALUES($1,$2,$3,1,true,1)
+       VALUES($1,$2,$3,1,$4,$5)
        ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = inventory.quantity + 1`,
-      [req.user.id, itemKey, item.title]
+      [req.user.id, itemDef.id, itemDef.name, itemDef.stackable, itemDef.weight]
     );
     await db.query('COMMIT');
+
     balance -= price;
-    satiety = Math.min(100, satiety + hungerGain);
-    thirst = Math.min(100, thirst + thirstGain);
+    satiety = Math.min(100, satiety + parseFloat(itemDef.hunger_gain));
+    thirst = Math.min(100, thirst + parseFloat(itemDef.thirst_gain));
+
+    const sock = onlineUsers[req.user.id];
+    if (sock) io.to(sock).emit('chatMessage', { playerId: 0, name: 'Система', message: `Вы купили ${itemDef.name}` });
+
     res.json({ success: true, balance, satiety, thirst });
   } catch (err) {
     await db.query('ROLLBACK');
@@ -349,4 +367,5 @@ router.post('/:id/rooms/:roomId/rent', authenticate, async (req, res) => {
   }
 });
 
-module.exports = router;
+return router;
+};

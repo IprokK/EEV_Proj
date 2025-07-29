@@ -39,6 +39,18 @@ class Economy {
       created_at TIMESTAMPTZ DEFAULT now()
     );`);
 
+    await this.db.query(`CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY,
+      key TEXT UNIQUE,
+      name TEXT NOT NULL,
+      type TEXT,
+      weight NUMERIC DEFAULT 1,
+      hunger_gain NUMERIC DEFAULT 0,
+      thirst_gain NUMERIC DEFAULT 0,
+      stackable BOOLEAN DEFAULT true,
+      functions JSONB DEFAULT '{}'::jsonb
+    );`);
+
     await this.db.query(`CREATE TABLE IF NOT EXISTS inventory (
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
@@ -48,6 +60,10 @@ class Economy {
       stackable BOOLEAN,
       weight NUMERIC
     );`);
+
+    await this.db.query(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_user_item ON inventory(user_id, item_id)'
+    );
 
     await this.db.query(
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS satiety NUMERIC DEFAULT 100'
