@@ -43,7 +43,38 @@ export default function MapEditor() {
     rendererRef.current = renderer;
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enablePan = true;
+    controls.screenSpacePanning = true;
     controlsRef.current = controls;
+
+    const handleKeyDown = e => {
+      const step = 1;
+      const cam = cameraRef.current;
+      const ctrl = controlsRef.current;
+      if (!cam || !ctrl) return;
+      switch (e.key) {
+        case 'ArrowUp':
+          cam.position.z -= step;
+          ctrl.target.z -= step;
+          break;
+        case 'ArrowDown':
+          cam.position.z += step;
+          ctrl.target.z += step;
+          break;
+        case 'ArrowLeft':
+          cam.position.x -= step;
+          ctrl.target.x -= step;
+          break;
+        case 'ArrowRight':
+          cam.position.x += step;
+          ctrl.target.x += step;
+          break;
+        default:
+          return;
+      }
+      ctrl.update();
+    };
+    window.addEventListener('keydown', handleKeyDown);
 
     const loadingManager = new THREE.LoadingManager();
     const textureLoader = new THREE.TextureLoader(loadingManager);
@@ -105,6 +136,7 @@ export default function MapEditor() {
 
     return () => {
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('resize', onResize);
       mountRef.current.removeChild(renderer.domElement);
     };
