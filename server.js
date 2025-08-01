@@ -677,7 +677,7 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
 
     const objects = (await db.query(
-      `SELECT type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
+      `SELECT id, type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
          FROM interior_objects
         WHERE interior_id = $1
         ORDER BY id`,

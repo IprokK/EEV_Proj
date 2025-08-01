@@ -39,6 +39,7 @@ function Game({ avatarUrl, gender }) {
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
   const [interiorGroup, setInteriorGroup] = useState(null);
+  const [loadingInterior, setLoadingInterior] = useState(false);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
 
@@ -204,6 +205,8 @@ function Game({ avatarUrl, gender }) {
             objGltf.scene.position.set(o.x, o.y, o.z);
             objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
             objGltf.scene.scale.set(o.scale, o.scale, o.scale);
+            objGltf.scene.userData = { id: o.id };
+            if (o.type === 'interactive') objGltf.scene.userData.clickable = true;
             intGroup.add(objGltf.scene);
           } catch (e) {
             console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
@@ -213,6 +216,8 @@ function Game({ avatarUrl, gender }) {
           mesh.position.set(o.x, o.y, o.z);
           mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
           mesh.scale.set(o.scale, o.scale, o.scale);
+          mesh.userData = { id: o.id };
+          if (o.type === 'interactive') mesh.userData.clickable = true;
           intGroup.add(mesh);
         }
       }
@@ -235,6 +240,7 @@ function Game({ avatarUrl, gender }) {
         alert('Пожалуйста, войдите в систему, чтобы войти в здание');
         return;
       }
+      setLoadingInterior(true);
       try {
         const res = await fetch(
           `/api/city_objects/${houseId}/interior`,
@@ -257,9 +263,11 @@ function Game({ avatarUrl, gender }) {
           return;
         }
 
-        await loadInteriorScene(interiorId);
+        await movePlayerToInterior(interiorId);
       } catch (e) {
         console.error('Failed to enter interior:', e);
+      } finally {
+        setLoadingInterior(false);
       }
     };
 
@@ -592,7 +600,12 @@ function Game({ avatarUrl, gender }) {
 
 
 async function movePlayerToInterior(interiorId) {
-  await loadInteriorScene(interiorId);
+  setLoadingInterior(true);
+  try {
+    await loadInteriorScene(interiorId);
+  } finally {
+    setLoadingInterior(false);
+  }
 }
 
 function switchToFirstPersonCamera() {
@@ -1591,7 +1604,6 @@ function stopMove(dir) {
       // В функции onDocumentMouseDown заменяем существующий код на:
       async function onDocumentMouseDown(event) {
         if (!player) return;
-        if (isInInteriorRef.current) return; // disable clicks when inside
         event.preventDefault();
 
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1601,6 +1613,19 @@ function stopMove(dir) {
         );
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, cameraRef.current);
+
+        if (isInInteriorRef.current && interiorGroupRef.current) {
+          const hits = raycaster.intersectObjects(interiorGroupRef.current.children, true);
+          if (hits.length) {
+            let obj = hits[0].object;
+            while (obj && !obj.userData.clickable && obj.parent) obj = obj.parent;
+            if (obj && obj.userData.clickable) {
+              console.log('Clicked interior object', obj.userData);
+              return;
+            }
+          }
+          return;
+        }
 
         // NPC
         const npcHit = raycaster.intersectObjects(npcMeshes, true);
@@ -1623,7 +1648,7 @@ function stopMove(dir) {
             return;
           }
           if (obj && obj.userData.interiorId) {
-            await loadInteriorScene(obj.userData.interiorId);
+            await movePlayerToInterior(obj.userData.interiorId);
             return;
           }
         }
@@ -1851,12 +1876,12 @@ function stopMove(dir) {
       if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !player) return;
       const move = moveInputRef.current;
       const speed = 3;
-      const rot = Math.PI;
-      if (move.left) player.rotation.y += rot * delta;
-      if (move.right) player.rotation.y -= rot * delta;
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
       if (move.forward) player.position.addScaledVector(forward, speed * delta);
       if (move.backward) player.position.addScaledVector(forward, -speed * delta);
+      if (move.left) player.position.addScaledVector(right, -speed * delta);
+      if (move.right) player.position.addScaledVector(right, speed * delta);
     }
 
     function updateCameraFollow() {
@@ -1996,6 +2021,11 @@ function stopMove(dir) {
 
   return (
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      {loadingInterior && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          Загрузка интерьера...
+        </div>
+      )}
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
       </div>
