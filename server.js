@@ -780,7 +780,7 @@ app.get('/api/interiors/:id/objects', authenticate, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
     const { rows } = await db.query(
-      `SELECT id, model_url, x, y, z, rot_x, rot_y, rot_z, scale
+      `SELECT id, type, model_url, x, y, z, rot_x, rot_y, rot_z, scale
          FROM interior_objects
         WHERE interior_id = $1
         ORDER BY id`,
@@ -811,10 +811,11 @@ app.post('/api/interiors/:id/save', authenticate, async (req, res) => {
       if (obj.id) {
         await db.query(
           `UPDATE interior_objects
-              SET model_url=$1, x=$2, y=$3, z=$4,
-                  rot_x=$5, rot_y=$6, rot_z=$7, scale=$8
-            WHERE id=$9 AND interior_id=$10`,
+              SET type=$1, model_url=$2, x=$3, y=$4, z=$5,
+                  rot_x=$6, rot_y=$7, rot_z=$8, scale=$9
+            WHERE id=$10 AND interior_id=$11`,
           [
+            obj.type,
             obj.model_url,
             obj.x,
             obj.y,
@@ -830,10 +831,11 @@ app.post('/api/interiors/:id/save', authenticate, async (req, res) => {
       } else {
         await db.query(
           `INSERT INTO interior_objects
-            (interior_id, model_url, x, y, z, rot_x, rot_y, rot_z, scale)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            (interior_id, type, model_url, x, y, z, rot_x, rot_y, rot_z, scale)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             id,
+            obj.type,
             obj.model_url,
             obj.x,
             obj.y,
