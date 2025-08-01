@@ -10,6 +10,15 @@ export default function MapEditor() {
   const [mode, setMode] = useState('translate');
   const [cities, setCities] = useState([]);
   const [cityId, setCityId] = useState(null);
+  const [selectedObj, setSelectedObj] = useState(null);
+  const [coords, setCoords] = useState({
+    posX: 0,
+    posY: 0,
+    posZ: 0,
+    rotX: 0,
+    rotY: 0,
+    rotZ: 0
+  });
 
   const sceneRef = useRef();
   const cameraRef = useRef();
@@ -19,8 +28,86 @@ export default function MapEditor() {
   const objectsRef = useRef([]);
   const removedIdsRef = useRef([]);
   const selectedRef = useRef(null);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const transformStart = useRef(null);
   const loader = useRef(new GLTFLoader()).current;
   const materialRef = useRef();
+
+  const updateCoordsValues = obj => {
+    if (!obj) return;
+    setCoords({
+      posX: obj.position.x,
+      posY: obj.position.y,
+      posZ: obj.position.z,
+      rotX: obj.rotation.x,
+      rotY: obj.rotation.y,
+      rotZ: obj.rotation.z
+    });
+  };
+
+  const pushAction = action => {
+    undoStack.current.push(action);
+    redoStack.current = [];
+  };
+
+  const undo = () => {
+    const action = undoStack.current.pop();
+    if (!action) return;
+    redoStack.current.push(action);
+    switch (action.type) {
+      case 'add':
+        if (action.object.parent) action.object.parent.remove(action.object);
+        objectsRef.current = objectsRef.current.filter(o => o !== action.object);
+        if (selectedRef.current === action.object) {
+          selectedRef.current = null;
+          setSelectedObj(null);
+        }
+        break;
+      case 'delete':
+        sceneRef.current.add(action.object);
+        objectsRef.current.splice(action.index, 0, action.object);
+        selectedRef.current = action.object;
+        setSelectedObj(action.object);
+        break;
+      case 'transform':
+        action.object.position.copy(action.prevPosition);
+        action.object.rotation.copy(action.prevRotation);
+        break;
+      default:
+        break;
+    }
+    updateCoordsValues(selectedRef.current);
+  };
+
+  const redo = () => {
+    const action = redoStack.current.pop();
+    if (!action) return;
+    undoStack.current.push(action);
+    switch (action.type) {
+      case 'add':
+        sceneRef.current.add(action.object);
+        objectsRef.current.push(action.object);
+        selectedRef.current = action.object;
+        setSelectedObj(action.object);
+        break;
+      case 'delete':
+        if (action.object.parent) action.object.parent.remove(action.object);
+        objectsRef.current = objectsRef.current.filter(o => o !== action.object);
+        if (selectedRef.current === action.object) {
+          selectedRef.current = null;
+          setSelectedObj(null);
+        }
+        break;
+      case 'transform':
+        action.object.position.copy(action.newPosition);
+        action.object.rotation.copy(action.newRotation);
+        break;
+      default:
+        break;
+    }
+    updateCoordsValues(selectedRef.current);
+  };
 
   useEffect(() => {
     const scene = new THREE.Scene();
@@ -63,6 +150,34 @@ export default function MapEditor() {
     });
     scene.add(transform);
     transformRef.current = transform;
+    transform.addEventListener('mouseDown', () => {
+      if (selectedRef.current) {
+        transformStart.current = {
+          object: selectedRef.current,
+          pos: selectedRef.current.position.clone(),
+          rot: selectedRef.current.rotation.clone()
+        };
+      }
+    });
+    transform.addEventListener('mouseUp', () => {
+      if (transformStart.current) {
+        const obj = transformStart.current.object;
+        pushAction({
+          type: 'transform',
+          object: obj,
+          prevPosition: transformStart.current.pos,
+          prevRotation: transformStart.current.rot,
+          newPosition: obj.position.clone(),
+          newRotation: obj.rotation.clone()
+        });
+        transformStart.current = null;
+      }
+    });
+    transform.addEventListener('objectChange', () => {
+      if (selectedRef.current) {
+        updateCoordsValues(selectedRef.current);
+      }
+    });
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
@@ -76,14 +191,16 @@ export default function MapEditor() {
       const intersects = raycaster.intersectObjects(objectsRef.current, true);
       if (intersects.length > 0) {
         let obj = intersects[0].object;
-        // find top-level object stored in objectsRef
         while (obj.parent && !objectsRef.current.includes(obj)) {
           obj = obj.parent;
         }
         transform.attach(obj);
         selectedRef.current = obj;
+        setSelectedObj(obj);
+        updateCoordsValues(obj);
       } else {
         selectedRef.current = null;
+        setSelectedObj(null);
         transform.detach();
       }
     };
@@ -178,7 +295,30 @@ export default function MapEditor() {
       sceneRef.current.add(m);
       objectsRef.current.push(m);
       transformRef.current.attach(m);
+      selectedRef.current = m;
+      setSelectedObj(m);
+      updateCoordsValues(m);
+      pushAction({ type: 'add', object: m });
     });
+  };
+
+  const copySelected = () => {
+    const obj = selectedRef.current;
+    if (!obj) return;
+    const clone = obj.clone(true);
+    clone.traverse(child => {
+      if (child.isMesh && materialRef.current) {
+        child.material = materialRef.current.clone();
+        child.material.needsUpdate = true;
+      }
+    });
+    sceneRef.current.add(clone);
+    objectsRef.current.push(clone);
+    transformRef.current.attach(clone);
+    selectedRef.current = clone;
+    setSelectedObj(clone);
+    updateCoordsValues(clone);
+    pushAction({ type: 'add', object: clone });
   };
 
   const deleteSelected = () => {
@@ -190,11 +330,57 @@ export default function MapEditor() {
     } else {
       sceneRef.current.remove(obj);
     }
+    const idx = objectsRef.current.indexOf(obj);
     objectsRef.current = objectsRef.current.filter(o => o !== obj);
     if (obj.userData.id) {
       removedIdsRef.current.push(obj.userData.id);
     }
     selectedRef.current = null;
+    setSelectedObj(null);
+    setCoords({ posX: 0, posY: 0, posZ: 0, rotX: 0, rotY: 0, rotZ: 0 });
+    pushAction({ type: 'delete', object: obj, index: idx });
+  };
+
+  const handleCoordChange = (field, value) => {
+    setCoords(prev => ({ ...prev, [field]: value }));
+    const num = parseFloat(value);
+    const obj = selectedRef.current;
+    if (!obj || isNaN(num)) return;
+    const prevPos = obj.position.clone();
+    const prevRot = obj.rotation.clone();
+    switch (field) {
+      case 'posX':
+        obj.position.x = num;
+        break;
+      case 'posY':
+        obj.position.y = num;
+        break;
+      case 'posZ':
+        obj.position.z = num;
+        break;
+      case 'rotX':
+        obj.rotation.x = num;
+        break;
+      case 'rotY':
+        obj.rotation.y = num;
+        break;
+      case 'rotZ':
+        obj.rotation.z = num;
+        break;
+      default:
+        break;
+    }
+    pushAction({
+      type: 'transform',
+      object: obj,
+      prevPosition: prevPos,
+      prevRotation: prevRot,
+      newPosition: obj.position.clone(),
+      newRotation: obj.rotation.clone()
+    });
+    if (transformRef.current) {
+      transformRef.current.updateMatrixWorld(true);
+    }
   };
 
   const saveMap = () => {
@@ -249,8 +435,35 @@ export default function MapEditor() {
           {mode === 'translate' ? 'Перемещение' : 'Вращение'}
         </button>
         <button onClick={deleteSelected}>Удалить</button>
+        <button onClick={copySelected}>Копировать</button>
+        <button onClick={undo}>Назад</button>
+        <button onClick={redo}>Вперед</button>
         <button onClick={saveMap}>Сохранить</button>
       </div>
+      {selectedObj && (
+        <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(255,255,255,0.8)', padding: 8 }}>
+          <div style={{ marginBottom: 4 }}>Позиция:</div>
+          <div>
+            X: <input type="number" step="0.1" value={coords.posX} onChange={e => handleCoordChange('posX', e.target.value)} />
+          </div>
+          <div>
+            Y: <input type="number" step="0.1" value={coords.posY} onChange={e => handleCoordChange('posY', e.target.value)} />
+          </div>
+          <div>
+            Z: <input type="number" step="0.1" value={coords.posZ} onChange={e => handleCoordChange('posZ', e.target.value)} />
+          </div>
+          <div style={{ marginTop: 4 }}>Вращение:</div>
+          <div>
+            X: <input type="number" step="0.1" value={coords.rotX} onChange={e => handleCoordChange('rotX', e.target.value)} />
+          </div>
+          <div>
+            Y: <input type="number" step="0.1" value={coords.rotY} onChange={e => handleCoordChange('rotY', e.target.value)} />
+          </div>
+          <div>
+            Z: <input type="number" step="0.1" value={coords.rotZ} onChange={e => handleCoordChange('rotZ', e.target.value)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
