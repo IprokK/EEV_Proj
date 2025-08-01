@@ -40,6 +40,7 @@ function Game({ avatarUrl, gender }) {
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
   const [interiorGroup, setInteriorGroup] = useState(null);
+  const [isInteriorLoading, setInteriorLoading] = useState(false);
   const mountRef = useRef(null);
   const socketRef = useRef(null);
 
@@ -174,67 +175,77 @@ function Game({ avatarUrl, gender }) {
     }
 
     async function loadInteriorScene(interiorId) {
+      setInteriorLoading(true);
       const token = localStorage.getItem('token');
-      const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: 'include',
-        cache: 'no-cache'
-      });
+      try {
+        const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          cache: 'no-cache'
+        });
 
-      if (!defRes.ok) {
-        const errText = await defRes.text();
-        console.error(`Ошибка ${defRes.status} при загрузке определения интерьера: ${errText}`);
-        alert(`Не удалось загрузить определение интерьера: ${errText}`);
-        return;
-      }
-
-      const { glb, objects } = await defRes.json();
-      const baseUrl = window.location.origin;
-      const glbUrl = baseUrl + glb;
-      console.log('Loading GLB from', glbUrl);
-
-      const gltf = await loadGLTF(glbUrl);
-
-      const scene = sceneRef.current;
-      savedPositionRef.current.copy(playerRef.current.position);
-      toggleWorldVisibility(false);
-      scene.remove(cityGroupRef.current);
-
-      const intGroup = new THREE.Group();
-      intGroup.name = 'interiorGroup';
-      intGroup.add(gltf.scene);
-
-      for (const o of objects) {
-        if (o.model_url) {
-          try {
-            const objGltf = await loadGLTF(baseUrl + o.model_url);
-            objGltf.scene.position.set(o.x, o.y, o.z);
-            objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-            objGltf.scene.scale.set(o.scale, o.scale, o.scale);
-            intGroup.add(objGltf.scene);
-          } catch (e) {
-            console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
-          }
-        } else {
-          const mesh = baseChairMesh.clone();
-          mesh.position.set(o.x, o.y, o.z);
-          mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-          mesh.scale.set(o.scale, o.scale, o.scale);
-          intGroup.add(mesh);
+        if (!defRes.ok) {
+          const errText = await defRes.text();
+          console.error(`Ошибка ${defRes.status} при загрузке определения интерьера: ${errText}`);
+          alert(`Не удалось загрузить определение интерьера: ${errText}`);
+          return;
         }
+
+        const { glb, objects } = await defRes.json();
+        const baseUrl = window.location.origin;
+        const glbUrl = baseUrl + glb;
+        console.log('Loading GLB from', glbUrl);
+
+        const gltf = await loadGLTF(glbUrl);
+
+        const scene = sceneRef.current;
+        savedPositionRef.current.copy(playerRef.current.position);
+        toggleWorldVisibility(false);
+        scene.remove(cityGroupRef.current);
+
+        const intGroup = new THREE.Group();
+        intGroup.name = 'interiorGroup';
+        intGroup.add(gltf.scene);
+
+        for (const o of objects) {
+          let obj3d;
+          if (o.model_url) {
+            try {
+              const objGltf = await loadGLTF(baseUrl + o.model_url);
+              obj3d = objGltf.scene;
+            } catch (e) {
+              console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
+              continue;
+            }
+          } else {
+            obj3d = baseChairMesh.clone();
+          }
+          obj3d.position.set(o.x, o.y, o.z);
+          obj3d.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+          obj3d.scale.set(o.scale, o.scale, o.scale);
+          obj3d.userData = { type: o.type, id: o.id };
+          if (o.type === 'interactive') {
+            obj3d.userData.clickAction = () => {
+              console.log('Interactive object clicked', o.id);
+            };
+          }
+          intGroup.add(obj3d);
+        }
+
+        const light = new THREE.AmbientLight(0xffffff, 1);
+        intGroup.add(light);
+
+        scene.add(intGroup);
+        interiorGroupRef.current = intGroup;
+        setInteriorGroup(intGroup);
+        playerRef.current.position.set(0, 0, 0);
+        playerRef.current.quaternion.identity();
+        switchToFirstPersonCamera();
+        setIsInInterior(true);
+        setSelectedHouse(null);
+      } finally {
+        setInteriorLoading(false);
       }
-
-      const light = new THREE.AmbientLight(0xffffff, 1);
-      intGroup.add(light);
-
-      scene.add(intGroup);
-      interiorGroupRef.current = intGroup;
-      setInteriorGroup(intGroup);
-      playerRef.current.position.set(0, 0, 0);
-      playerRef.current.quaternion.identity();
-      switchToFirstPersonCamera();
-      setIsInInterior(true);
-      setSelectedHouse(null);
     }
     const enterInterior = async (houseId) => {
       const token = localStorage.getItem('token');
@@ -1602,7 +1613,6 @@ function stopMove(dir) {
       // В функции onDocumentMouseDown заменяем существующий код на:
       async function onDocumentMouseDown(event) {
         if (!player) return;
-        if (isInInteriorRef.current) return; // disable clicks when inside
         event.preventDefault();
 
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1612,6 +1622,21 @@ function stopMove(dir) {
         );
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, cameraRef.current);
+
+        if (isInInteriorRef.current && interiorGroupRef.current) {
+          const hits = raycaster.intersectObjects(interiorGroupRef.current.children, true);
+          if (hits.length) {
+            let obj = hits[0].object;
+            while (obj && !obj.userData.clickAction && obj !== interiorGroupRef.current) {
+              obj = obj.parent;
+            }
+            if (obj && obj.userData.clickAction) {
+              obj.userData.clickAction();
+              return;
+            }
+          }
+          return;
+        }
 
         // NPC
         const npcHit = raycaster.intersectObjects(npcMeshes, true);
@@ -1862,12 +1887,12 @@ function stopMove(dir) {
       if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !player) return;
       const move = moveInputRef.current;
       const speed = 3;
-      const rot = Math.PI;
-      if (move.left) player.rotation.y += rot * delta;
-      if (move.right) player.rotation.y -= rot * delta;
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
       if (move.forward) player.position.addScaledVector(forward, speed * delta);
       if (move.backward) player.position.addScaledVector(forward, -speed * delta);
+      if (move.left) player.position.addScaledVector(right, -speed * delta);
+      if (move.right) player.position.addScaledVector(right, speed * delta);
     }
 
     function updateCameraFollow() {
@@ -2010,6 +2035,23 @@ function stopMove(dir) {
 
   return (
     <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      {isInteriorLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 2000,
+            background: 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            padding: '8px 16px',
+            borderRadius: 4,
+          }}
+        >
+          Загрузка интерьера...
+        </div>
+      )}
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
       </div>

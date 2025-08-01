@@ -146,7 +146,7 @@ export default function InteriorEditor() {
             m.position.set(obj.x, obj.y, obj.z);
             m.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
             m.scale.set(obj.scale, obj.scale, obj.scale);
-            m.userData = { id: obj.id, model_url: obj.model_url };
+            m.userData = { id: obj.id, model_url: obj.model_url, type: obj.type };
             m.traverse(child => {
               if (child.isMesh && materialRef.current) {
                 child.material = materialRef.current.clone();
@@ -166,7 +166,7 @@ export default function InteriorEditor() {
     const url = `/models/copied/${name}`;
     loader.load(url, gltf => {
       const m = gltf.scene;
-      m.userData = { model_url: url, name };
+      m.userData = { model_url: url, name, type: null };
       m.traverse(child => {
         if (child.isMesh && materialRef.current) {
           child.material = materialRef.current.clone();
@@ -205,7 +205,8 @@ export default function InteriorEditor() {
       rot_x: obj.rotation.x,
       rot_y: obj.rotation.y,
       rot_z: obj.rotation.z,
-      scale: obj.scale.x || 1
+      scale: obj.scale.x || 1,
+      type: obj.userData.type || null
     }));
     const token = localStorage.getItem('token');
     fetch(`/api/interiors/${interiorId}/save`, {
