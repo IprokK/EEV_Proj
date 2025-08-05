@@ -157,6 +157,10 @@ function Game({ avatarUrl, gender }) {
     const loadingManager = useRef(new THREE.LoadingManager()).current;
     const loader = useRef(new GLTFLoader(loadingManager)).current;
     const modelCache = useRef({}).current;
+    // загрузчики и кэш моделей игроков
+    const gltfLoader = useRef(new GLTFLoader()).current;
+    const animLoader = useRef(new GLTFLoader()).current;
+    const playerCache = useRef({}).current;
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -809,9 +813,6 @@ function stopMove(dir) {
     socket.emit('economy:getInventory', { userId: profile.id });
     socket.on('economy:inventory', setInventory);
     socket.on('gameTime:update', ({ time }) => setGameTime(time));
-    const gltfLoader = useRef(new GLTFLoader()).current;
-    const animLoader = new GLTFLoader();
-    const playerCache = useRef({}).current;
 
     async function loadPlayerModel(avatarUrl) {
       if (playerCache[avatarUrl]) {
