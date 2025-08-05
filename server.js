@@ -1,6 +1,9 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const db = require('./db');
+const Economy = require('./economy');
+const GameTime = require('./gameTime');
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -25,7 +28,7 @@ async function ensureMessagesTable() {
 }
 
 ensureMessagesTable();
-
+app.use(compression());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -43,8 +46,13 @@ const io = require('socket.io')(http, {
     methods: ['GET', 'POST']
   }
 });
+const economy = new Economy(io, db);
+const gameTime = new GameTime(io, 8);
 
-let onlineUsers = {};   
+let onlineUsers = {};
+
+const organizationsRouter = require('./server/organizations')(io, onlineUsers);
+app.use('/api/organizations', organizationsRouter);
 
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
@@ -476,14 +484,22 @@ app.get('/api/me', authenticate, async (req, res) => {
   const { rows } = await db.query(`
     SELECT
       email,
-      first_name AS "firstName",
-      last_name  AS "lastName",
+      first_name    AS "firstName",
+      last_name     AS "lastName",
       gender,
       age,
       city,
-      avatar_url AS "avatarURL",
+      avatar_url    AS "avatarURL",
       balance,
-      satiery
+      hours_played  AS "hoursPlayed",
+      reputation,
+      phone,
+      sportiness,
+      health_level  AS "healthLevel",
+      stress_level  AS "stressLevel",
+      satiety,
+      thirst,
+      diseases
     FROM users
     WHERE id = $1
   `, [userId]);
@@ -521,9 +537,10 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
        phone,
        sportiness,
        health_level  AS "healthLevel",
-       stress_level  AS "stressLevel",
-       satiety,
-       diseases
+      stress_level  AS "stressLevel",
+      satiety,
+      thirst,
+      diseases
      FROM users
      WHERE id = $1
    `, [dbId]);
@@ -549,6 +566,7 @@ app.post('/api/register', async (req, res) => {
   ]);
 
   const user = result.rows[0];
+  await economy.createAccount(user.id, 'USD');
   const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
     expiresIn: '12h'
   });
@@ -801,31 +819,6 @@ app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res)
 });
 
 
-// Покупка товара в организации
-app.post('/api/organizations/:id/purchase', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const { itemKey } = req.body;
-  try {
-    const { rows } = await db.query(
-      'SELECT menu FROM organization_settings WHERE organization_id = $1',
-      [id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Организация не найдена' });
-    const menu = rows[0].menu || {};
-    const item = menu[itemKey];
-    if (!item) return res.status(400).json({ error: 'Товар не найден' });
-    const price = item.price || 0;
-    const satiety = item.satiety || 0;
-    const upd = await db.query(
-      'UPDATE users SET balance = balance - $1, satiety = LEAST(satiety + $2, 100) WHERE id = $3 RETURNING satiety',
-      [price, satiety, req.user.id]
-    );
-    res.json({ success: true, satiety: upd.rows[0].satiety });
-  } catch (e) {
-    console.error('purchase error', e);
-    res.status(500).json({ error: 'Ошибка покупки' });
-  }
-});
 
 
 // Сохранить текущую карту в текстовый файл

@@ -6,9 +6,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+THREE.Cache.enabled = true;
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
+import OrgControlPanel from './components/OrgControlPanel';
+import Inventory from './components/Inventory';
 
 function Game({ avatarUrl, gender }) {
 
@@ -47,10 +50,38 @@ function Game({ avatarUrl, gender }) {
   const [playerStats, setPlayerStats] = useState(null);
   const [micEnabled, setMicEnabled] = useState(false);
   const [orgMenu, setOrgMenu] = useState(null);
+  const [orgPanelId, setOrgPanelId] = useState(null);
   const [satiety, setSatiety] = useState(() => {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.satiety ?? 100;
   });
+  const [thirst, setThirst] = useState(() => {
+    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    return p.thirst ?? 100;
+  });
+  const [inventory, setInventory] = useState([]);
+  const [showInventory, setShowInventory] = useState(false);
+  const [gameTime, setGameTime] = useState('');
+  const [balance, setBalance] = useState(() => {
+    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    return p.balance ?? 0;
+  });
+
+  useEffect(() => {
+    const decay = setInterval(() => {
+      setSatiety(s => Math.max(0, s - 0.05));
+      setThirst(t => Math.max(0, t - 0.07));
+    }, 10000);
+    return () => clearInterval(decay);
+  }, []);
+
+  useEffect(() => {
+    const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    profile.satiety = satiety;
+    profile.thirst = thirst;
+    sessionStorage.setItem('user_profile', JSON.stringify(profile));
+    socketRef.current?.emit('economy:updateStats', { satiety, thirst });
+  }, [satiety, thirst]);
 
   const statsRef = useRef(null);
   const voiceConnections = useRef({});
@@ -123,7 +154,13 @@ function Game({ avatarUrl, gender }) {
             console.error('Ошибка загрузки диалога:', error);
         }
     };
-    const loader = new GLTFLoader();
+    const loadingManager = useRef(new THREE.LoadingManager()).current;
+    const loader = useRef(new GLTFLoader(loadingManager)).current;
+    const modelCache = useRef({}).current;
+    // загрузчики и кэш моделей игроков
+    const gltfLoader = useRef(new GLTFLoader()).current;
+    const animLoader = useRef(new GLTFLoader()).current;
+    const playerCache = useRef({}).current;
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -131,9 +168,13 @@ function Game({ avatarUrl, gender }) {
     );
 
     async function loadGLTF(url) {
-      return new Promise((resolve, reject) => {
-        loader.load(url, gltf => resolve(gltf), undefined, err => reject(err));
-      });
+      if (modelCache[url]) {
+        const cached = modelCache[url];
+        return { ...cached, scene: cached.scene.clone(true) };
+      }
+      const gltf = await loader.loadAsync(url);
+      modelCache[url] = gltf;
+      return { ...gltf, scene: gltf.scene.clone(true) };
     }
 
     async function loadInteriorScene(interiorId) {
@@ -534,27 +575,30 @@ function Game({ avatarUrl, gender }) {
 }
 
 
-  async function openOrganizationMenu(objectId) {
+  async function openOrganizationMenu(orgId) {
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(
-        `/api/organizations/by-object/${objectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) {
-        throw new Error(`status ${res.status}`);
-      }
-      const data = await res.json();
-      setOrgMenu(data);
+      const orgRes = await fetch(`/api/organizations/${orgId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!orgRes.ok) throw new Error(`status ${orgRes.status}`);
+      const org = await orgRes.json();
+      const setRes = await fetch(`/api/organizations/${orgId}/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const settings = setRes.ok ? await setRes.json() : {};
+      setOrgMenu({ id: orgId, name: org.name, menu: settings.menu || {} });
       setSelectedHouse(null);
     } catch (e) {
-      console.error(
-        'Не удалось загрузить меню организации для объекта',
-        objectId,
-        e
-      )
+      console.error('Не удалось загрузить меню организации', orgId, e);
       alert('Ошибка загрузки меню организации');
     }
+  }
+
+  function openOrganizationPanel(orgId) {
+    setOrgPanelId(orgId);
+    setOrgMenu(null);
+    setSelectedHouse(null);
   }
 
 
@@ -601,10 +645,31 @@ function stopMove(dir) {
     if (res.ok) {
       const data = await res.json();
       setSatiety(data.satiety);
+      setThirst(data.thirst);
+      setBalance(data.balance);
       const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
       profile.satiety = data.satiety;
+      profile.thirst = data.thirst;
+      profile.balance = data.balance;
       sessionStorage.setItem('user_profile', JSON.stringify(profile));
+      socketRef.current.emit('economy:getInventory', { userId: profile.id });
     }
+  }
+
+  function handleItemAction(item) {
+    const act = window.prompt('1 - использовать, 2 - выкинуть');
+    const prof = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    if (act === '1') {
+      if (item.name.toLowerCase().includes('вода')) {
+        setThirst(t => Math.min(100, t + 20));
+      } else {
+        setSatiety(s => Math.min(100, s + 20));
+      }
+      socketRef.current.emit('economy:removeItem', { userId: prof.id, itemId: item.item_id, quantity: 1 });
+    } else if (act === '2') {
+      socketRef.current.emit('economy:removeItem', { userId: prof.id, itemId: item.item_id, quantity: 1 });
+    }
+    socketRef.current.emit('economy:getInventory', { userId: prof.id });
   }
   function toggleWorldVisibility(visible) {
     groundRef.current && (groundRef.current.visible = visible);
@@ -717,6 +782,7 @@ function stopMove(dir) {
     let pathfinderGrid;
     let currentPath = [];
     let pathIndex = 0;
+    let visibilityCounter = 0;
     let groundPlane;
     let destinationMarker;
     let customMaterial;
@@ -732,16 +798,31 @@ function stopMove(dir) {
     socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
     socket.on('connect_error', err => console.error('Socket connect_error:', err));
     socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
-    const gltfLoader = new GLTFLoader();
-    const animLoader = new GLTFLoader();
+    const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+    socket.emit('economy:getBalance', { userId: profile.id });
+    const balanceInterval = setInterval(() => {
+      socket.emit('economy:getBalance', { userId: profile.id });
+    }, 3000);
+    socket.on('economy:balanceChanged', ({ userId, newBalance }) => {
+      if (userId === profile.id) {
+        setBalance(newBalance);
+        const upd = { ...(profile || {}), balance: newBalance };
+        sessionStorage.setItem('user_profile', JSON.stringify(upd));
+      }
+    });
+    socket.emit('economy:getInventory', { userId: profile.id });
+    socket.on('economy:inventory', setInventory);
+    socket.on('gameTime:update', ({ time }) => setGameTime(time));
 
     async function loadPlayerModel(avatarUrl) {
-      return new Promise((resolve, reject) => {
-        gltfLoader.load(avatarUrl, (gltf) => {
-          if (!gltf.scene) return reject('GLTF.scene отсутствует');
-          resolve(gltf);
-        }, undefined, (err) => reject(err));
-      });
+      if (playerCache[avatarUrl]) {
+        const cached = playerCache[avatarUrl];
+        return { ...cached, scene: cached.scene.clone(true) };
+      }
+      const gltf = await gltfLoader.loadAsync(avatarUrl);
+      if (!gltf.scene) throw new Error('GLTF.scene отсутствует');
+      playerCache[avatarUrl] = gltf;
+      return { ...gltf, scene: gltf.scene.clone(true) };
     }
 
     async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
@@ -1550,7 +1631,7 @@ function stopMove(dir) {
           let obj = houseHit[0].object;
           while (obj && !obj.userData.id && !obj.userData.interiorId) obj = obj.parent;
           if (obj && obj.userData.id) {
-            setSelectedHouse(obj.userData.id);
+            setSelectedHouse(obj.userData);
             return;
           }
           if (obj && obj.userData.interiorId) {
@@ -1611,6 +1692,11 @@ function stopMove(dir) {
         if (k === 'arrowdown' || k === 's') startMove('backward');
         if (k === 'arrowleft' || k === 'a') startMove('left');
         if (k === 'arrowright' || k === 'd') startMove('right');
+      }
+      if (event.key.toLowerCase() === 'i') {
+        const prof = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        socket.emit('economy:getInventory', { userId: prof.id });
+        setShowInventory(v => !v);
       }
       destination = null;
       destinationMarker.visible = false;
@@ -1825,7 +1911,10 @@ function stopMove(dir) {
       updateFirstPersonMovement(delta);
       if (mixer) mixer.update(delta);
       updateTransparency();
-      updateCityObjectVisibility();
+      if (visibilityCounter-- <= 0) {
+        updateCityObjectVisibility();
+        visibilityCounter = 10;
+      }
       updateCameraFollow();
       for (let id in remotePlayers) {
         const r = remotePlayers[id];
@@ -1860,6 +1949,7 @@ function stopMove(dir) {
     window.addEventListener('resize', onWindowResize, false);
 
     return () => {
+      clearInterval(balanceInterval);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
@@ -1924,8 +2014,17 @@ function stopMove(dir) {
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         Сытость: {satiety}
       </div>
+      <div style={{ position: 'absolute', top: 50, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Жажда: {thirst}
+      </div>
+      <div style={{ position: 'absolute', top: 80, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        Баланс: {balance}
+      </div>
       <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
         X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
+      </div>
+      <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+        {new Date(gameTime).toLocaleString()}
       </div>
       {/* Кнопка карты мира */}
       <button
@@ -1994,7 +2093,7 @@ function stopMove(dir) {
           zIndex: 1000
         }}>
           <button
-            onClick={() => enterInterior(selectedHouse)}
+            onClick={() => enterInterior(selectedHouse.id)}
             style={{
               fontSize: '18px',
               padding: '8px 16px',
@@ -2091,10 +2190,14 @@ function stopMove(dir) {
             <b>Налог:</b> {selectedHouse.tax}
           </p>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <button onClick={() => enterHouse(selectedHouse)}
-                    style={btnStyle}>Войти</button>
-            <button onClick={() => viewStats(selectedHouse)}
-                    style={btnStyle}>Статистика</button>
+              <button onClick={() => enterHouse(selectedHouse)} style={btnStyle}>Войти</button>
+            <button onClick={() => viewStats(selectedHouse)} style={btnStyle}>Статистика</button>
+            {selectedHouse.organizationId && (
+              <>
+                <button onClick={() => openOrganizationMenu(selectedHouse.organizationId)} style={btnStyle}>Меню</button>
+                <button onClick={() => openOrganizationPanel(selectedHouse.organizationId)} style={btnStyle}>Управление</button>
+              </>
+            )}
           </div>
         </div>
           )}
@@ -2316,8 +2419,9 @@ function stopMove(dir) {
       {orgMenu && (
         <div style={{
           position: 'absolute',
-          top: 20,
-          right: 20,
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
           background: 'rgba(0,0,0,0.8)',
           color: '#fff',
           padding: 16,
@@ -2333,6 +2437,14 @@ function stopMove(dir) {
           ))}
           <button onClick={() => setOrgMenu(null)} style={{ marginTop: 8 }}>Закрыть</button>
         </div>
+      )}
+
+      {orgPanelId && (
+        <OrgControlPanel orgId={orgPanelId} onClose={() => setOrgPanelId(null)} />
+      )}
+
+      {showInventory && (
+        <Inventory items={inventory} onUse={handleItemAction} />
       )}
 
       <DoubleTapWrapper

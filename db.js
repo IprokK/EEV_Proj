@@ -9,4 +9,16 @@ const pool = new Pool({
     : false
 });
 
-module.exports = { query: (text, params) => pool.query(text, params) };
+module.exports = {
+  /**
+   * Execute a SQL query using the shared connection pool.
+   * @param {string} text
+   * @param {any[]} [params]
+   */
+  query: (text, params) => pool.query(text, params),
+
+  /**
+   * Expose the underlying pool for transactions or advanced usages.
+   */
+  pool
+};

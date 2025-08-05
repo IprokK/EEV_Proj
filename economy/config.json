@@ -1,0 +1,6 @@
+{
+  "startBalance": 10000,
+  "batchIntervalMinutes": 5,
+  "exchangeRates": { "USD": 1, "EUR": 0.9 },
+  "monitoringEndpoint": "https://monitor.example.com/log"
+}
