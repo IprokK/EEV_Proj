@@ -9,38 +9,54 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import PF from 'pathfinding';
 import { io } from 'socket.io-client';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
+/// начало изменения ///
+import { useDialogManager } from './components/DialogSystem/DialogManager';
+import { DialogWindow } from './components/DialogSystem/DialogWindow';
+import WaveformPlayer from './pages/WaveformPlayer';
+/// конец изменения ///
 
 function Game({ avatarUrl, gender }) {
 
-  // 1) реф для хранилища сцены
-  const sceneRef = useRef(null);
+    // 1) реф для хранилища сцены
+    const sceneRef = useRef(null);
 
-  // 2) реф для группы «города»
-  const cityGroupRef = useRef(null);
+    // 2) реф для группы «города»
+    const cityGroupRef = useRef(null);
 
-  // 3) реф для группы «интерьера»
-  const interiorGroupRef = useRef(null);
+    // 3) реф для группы «интерьера»
+    const interiorGroupRef = useRef(null);
 
-  const [activeApp, setActiveApp] = useState(null);
+    const [activeApp, setActiveApp] = useState(null);
 
-  const [selectedHouse, setSelectedHouse] = useState(null);
-  const [isInInterior, setIsInInterior] = useState(false);
-  const [interiorGroup, setInteriorGroup] = useState(null);
-  const mountRef = useRef(null);
-  const socketRef = useRef(null);
-  const [selectedPlayer, setSelectedPlayer] = useState(null);
-  const [playerStats, setPlayerStats] = useState(null);
-  const [micEnabled, setMicEnabled] = useState(false);
-  const [orgMenu, setOrgMenu] = useState(null);
-  const [satiety, setSatiety] = useState(() => {
-    const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-    return p.satiety ?? 100;
-  });
+    const [selectedHouse, setSelectedHouse] = useState(null);
+    const [isInInterior, setIsInInterior] = useState(false);
+    const [interiorGroup, setInteriorGroup] = useState(null);
+    const mountRef = useRef(null);
+    const socketRef = useRef(null);
+    const [selectedPlayer, setSelectedPlayer] = useState(null);
+    const [playerStats, setPlayerStats] = useState(null);
+    const [micEnabled, setMicEnabled] = useState(false);
+    const [orgMenu, setOrgMenu] = useState(null);
+    const [satiety, setSatiety] = useState(() => {
+        const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        return p.satiety ?? 100;
+    });
 
-  const statsRef = useRef(null);
-  const voiceConnections = useRef({});
-  const localStream = useRef(null);
+    /// начало изменения ///
+    // Начало копи
+    const [programmingLanguages, setProgrammingLanguages] = useState([]);
+    const [passwordCorrect, setPasswordCorrect] = useState(false);
+    const [showMiniGame, setShowMiniGame] = useState(false);
+    const [questsProgress, setQuestsProgress] = useState([]);
+    // Конец
+    /// конец изменения ///
+    const statsRef = useRef(null);
+    const voiceConnections = useRef({});
+    const localStream = useRef(null);
     const voiceIcons = useRef({});
+    /// начало изменения ///
+    const [isPlaying, setIsPlaying] = useState(true);
+    /// конец изменения ///
 
     const [currentDialog, setCurrentDialog] = useState(null);
     const [dialogIndex, setDialogIndex] = useState(0);
@@ -48,10 +64,31 @@ function Game({ avatarUrl, gender }) {
     const [formData, setFormData] = useState({});
     const [currentForm, setCurrentForm] = useState(null);
 
-  //Телефон
+    //Телефон
+    /// начало изменения ///
+    //Телефон\
+    /// конец изменения ///
+    ++           +
+
+/// начало изменения ///
+    const [audioUrl, setAudioUrl] = useState("/audio/firs.ogg");
+    // for Mini-game_2
+    const [showCleanupGame, setShowCleanupGame] = useState(false);
+    const [cleanupGameData, setCleanupGameData] = useState(null);
+    const [selectedTransaction, setSelectedTransaction] = useState(null);
+    const [markedTransactions, setMarkedTransactions] = useState([]);
+    const [decryptAttempts, setDecryptAttempts] = useState(3);
+    const [timeLeft, setTimeLeft] = useState(180); // 3 минуты
+    const [suspiciousFound, setSuspiciousFound] = useState(0);
+    const [gameResult, setGameResult] = useState(null);
+    const [personalArchive, setPersonalArchive] = useState([]);
+    const [seregaComments, setSeregaComments] = useState([]);
+    const [currentLevel, setCurrentLevel] = useState(1);
+    const [gameCompleted, setGameCompleted] = useState(false);
+    /// конец изменения ///
 
     const [activeChat, setActiveChat] = useState(null);
-      // Добавьте этот код в начало компонента Game, рядом с другими состояниями
+    // Добавьте этот код в начало компонента Game, рядом с другими состояниями
     const [telegramContacts, setTelegramContacts] = useState([]);
 
     const [isIframeOpen, setIsIframeOpen] = useState(false);
@@ -67,6 +104,11 @@ function Game({ avatarUrl, gender }) {
     const groundRef = useRef(null);
     const cityGroup = new THREE.Group();
     cityGroupRef.current = cityGroup;
+    /// начало изменения ///
+
+    const [seregaComment, setSeregaComment] = useState("Ну чё, хакер, разберёшься?");
+
+    /// конец изменения ///
     // группа интерьера создаётся при входе в здание
     const savedPositionRef = useRef(new THREE.Vector3());
     const remotePlayersRef = useRef({});
@@ -76,127 +118,438 @@ function Game({ avatarUrl, gender }) {
         if (appName === "Telegram") {
             loadTelegramContacts(); // Загрузка контактов при открытии
         }
+        /// начало изменения ///
+        if (appName === "Chrome") {
+            loadQuestsProgress();
+        }
+        if (appName === "Settings") {
+            setShowMiniGame(true);
+        }
+        /// конец изменения ///
     };
-
-
-    const loadDialog = async (npcId) => {
-        try {
-            const response = await fetch(`/dialogs/${npcId}.json`);
-            const data = await response.json();
-            setCurrentDialog(data);
-            setDialogIndex(0);
-            setShowDialog(true);
-        } catch (error) {
-            console.error('Ошибка загрузки диалога:', error);
+    /// начало изменения ///
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            // Перенаправьте на страницу входа или покажите сообщение
+            console.error('User not authenticated');
         }
-    };
-    const loader = new GLTFLoader();
-    // базовая геометрия для объектов типа "chair"
-    const baseChairMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x888888 })
-    );
-    const enterInterior = async (houseId) => {
-      // 0. проверяем наличие токена
-      const token = localStorage.getItem('token');
-      if (!token) {
-        alert('Пожалуйста, войдите в систему, чтобы войти в здание');
-        return;
-      }
-      try {
-        // 1. получить interiorId
-        let res = await fetch(
-          `/api/city_objects/${houseId}/interior`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            credentials: 'include',
-            cache: 'no-cache'
-          }
-        );
-        if (!res.ok) {
-          const errText = await res.text();
-          console.error(`Ошибка ${res.status} при получении interior_id: ${errText}`);
-          alert(`Не удалось получить данные интерьера: ${errText}`);
-          return;
-        }
-        let { interiorId } = await res.json();
+    }, []);
+    /// конец изменения ///
 
-        if (!interiorId || interiorId < 1) {
-          alert('Для этого здания не задан интерьер');
-          return;
-        }
+    /// начало изменения ///
+    const handlePasswordInput = (e) => {
+        if (e.key === 'Enter') {
+            const input = e.target.value.trim();
+            e.target.value = "";
+            /// конец изменения ///
 
-        // 2. получить путь к glb и список объектов внутри
-        res = await fetch(
-          `/api/interiors/${interiorId}/definition`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            credentials: 'include',
-            cache: 'no-cache'
-          }
-        );
-        if (!res.ok) {
-          const errText = await res.text();
-          console.error(`Ошибка ${res.status} при загрузке определения интерьера: ${errText}`);
-          alert(`Не удалось загрузить определение интерьера: ${errText}`);
-          return;
-        }
-        const { glb, objects } = await res.json();
+            const loadDialog = async (npcId) => {
+                /// начало изменения ///
+                const negativeComments = [
+                    "Ты чё, братан, спишь?!",
+                    "Мимо кассы, как всегда!",
+                    "Это даже я знаю, что не так!",
+                    "Ну и лажа...",
+                    "Ты вообще в теме или как?",
+                    "Не-а, попробуй ещё раз!"
+                ];
 
-        // 3. загрузить сам интерьер (glb)
-          const baseUrl = window.location.origin;             // например "http://37.27.238.225:4000"
-          const glbUrl  = baseUrl + glb;                      // "/models/interiors/…"
-          console.log('Loading GLB from', glbUrl);
-          loader.load(glbUrl, (gltf) => {
-          // удалить городскую группу от рендера
-          
-          const scene     = sceneRef.current;
+                const positiveComments = [
+                    "О, да ты в ударе сегодня!",
+                    "В точку, братишка!",
+                    "Ну наконец-то угадал!",
+                    "Так держать, хакер!",
+                    "Бинго! Правильный ответ!",
+                    "Ты меня удивляешь!"
+                ];
 
-          // прячем мир и сохраняем позицию игрока
-          savedPositionRef.current.copy(playerRef.current.position);
-          toggleWorldVisibility(false);
-
-          
-          // создать новую группу для интерьера
-          const intGroup = new THREE.Group();
-          intGroup.name = 'interiorGroup';
-          intGroup.add(gltf.scene);
-          
-          // 4. добавить «мебель» и другие объекты
-          objects.forEach(o => {
-            let mesh;
-            if (o.type === 'chair') {
-              // пример: клонируем некий базовый меш
-              mesh = baseChairMesh.clone();
-            } else {
-              // простой куб, если тип неизвестен
-              mesh = new THREE.Mesh(
-                new THREE.BoxGeometry(1,1,1),
-                new THREE.MeshStandardMaterial({ color: 0x888888 })
-              );
+                if (input === "first") {
+                    setTimeout(() => {
+                        setSeregaComment(positiveComments[Math.floor(Math.random() * positiveComments.length)]);
+                        setPasswordCorrect(true);
+                        setProgrammingLanguages(["JavaScript", "Python", "Java", "C++"]);
+                        setAudioUrl("/audio/byistro-stuchit-po-klaviature.ogg");
+                    }, 800);
+                }
+                else if (input === "Java") {
+                    setTimeout(() => {
+                        setSeregaComment(positiveComments[Math.floor(Math.random() * positiveComments.length)]);
+                        setPasswordCorrect(true);
+                        setProgrammingLanguages(["C#", "Go", "Rust", "Swift"]);
+                        setAudioUrl("/audio/pechatat-na-standartnoy-klaviature-apple.ogg");
+                    }, 800);
+                }
+                else if (input === "Rust") {
+                    setTimeout(() => {
+                        setSeregaComment(positiveComments[Math.floor(Math.random() * positiveComments.length)]);
+                        setPasswordCorrect(true);
+                        setShowMiniGame(false);
+                        loadCleanupGame();
+                    }, 800);
+                }
+                else {
+                    setTimeout(() => {
+                        setSeregaComment(negativeComments[Math.floor(Math.random() * negativeComments.length)]);
+                    }, 800);
+                }
             }
-            mesh.position.set(o.x, o.y, o.z);
-            mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-            mesh.scale.set(o.scale, o.scale, o.scale);
-            intGroup.add(mesh);
-          });
+        };
 
-          // добавить группу интерьера в сцену и сохранить ссылку
-          scene.add(intGroup);
-          interiorGroupRef.current = intGroup;
-          setInteriorGroup(intGroup);
-          playerRef.current.position.set(0, 0, 0);
-          setIsInInterior(true);
-          setSelectedHouse(null);
-        }, undefined, (err) => console.error(err));
-      } catch (e) {
-        console.error('Failed to enter interior:', e);
-      }
-    };
+        async function loadCleanupGame() {
+            /// конец изменения ///
+            try {
+                const response = await fetch(`/dialogs/${npcId}.json`);
+                /// начало изменения ///
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    console.error('No token found');
+                    return;
+                }
+                if (gameCompleted) return;
+                const res = await fetch(`/api/cleanup-game/data?level=${currentLevel}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
 
-    const handleAnswerSelect = (answer) => {
-        if (answer.end) {
-            setShowDialog(false);
+                // Добавьте проверку типа контента
+                const contentType = res.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await res.text();
+                    throw new Error(`Ожидался JSON, получено: ${text.substring(0, 100)}...`);
+                }
+
+                /// конец изменения ///
+                const data = await response.json();
+
+                /// начало изменения ///
+                const data = await res.json();
+                /// конец изменения ///
+                setCurrentDialog(data);
+                setDialogIndex(0);
+                /// начало изменения ///
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Неизвестная ошибка сервера');
+                }
+
+                setCleanupGameData(data.transactions);
+
+                if (!res.ok) {
+                    throw new Error(`Server error: ${res.status}`);
+                }
+
+                setCleanupGameData(data.transactions);
+                /// конец изменения ///
+                setShowDialog(true);
+                /// начало изменения ///
+                setShowCleanupGame(true);
+                /// конец изменения ///
+
+                /// начало изменения ///
+                setTimeLeft(180);
+                setDecryptAttempts(3);
+                setMarkedTransactions([]);
+                setSuspiciousFound(0);
+                setGameResult(null);
+                setSeregaComments([]);
+                setSelectedTransaction(null);
+
+                // Запуск таймера
+                const timer = setInterval(() => {
+                    setTimeLeft(prev => {
+                        if (prev <= 0) {
+                            clearInterval(timer);
+                            handleGameFinish(false);
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+
+                    // Комментарии Серёги
+                    if (timeLeft === 120) {
+                        addSeregaComment(`Уровень ${currentLevel}: Ты там не заснул, хакер?`);
+                    } else if (timeLeft === 60) {
+                        addSeregaComment(`Уровень ${currentLevel}: Время — деньги. Особенно чужие.`);
+                    }
+                }, 1000);
+
+                return () => clearInterval(timer);
+                /// конец изменения ///
+            } catch (error) {
+                /// начало изменения ///
+                /// конец изменения ///
+                console.error('Ошибка загрузки диалога:', error);
+
+            }
+            /// начало изменения ///
+        }
+
+
+        function addSeregaComment(text) {
+            setSeregaComments(prev => [...prev, { text, id: Date.now() }]);
+        }
+
+        function handleMarkTransaction(id) {
+            if (markedTransactions.includes(id)) {
+                setMarkedTransactions(prev => prev.filter(t => t !== id));
+                setSuspiciousFound(prev => prev - 1);
+            } else {
+                setMarkedTransactions(prev => [...prev, id]);
+
+                // Проверяем, действительно ли транзакция подозрительная
+                const transaction = cleanupGameData.find(tx => tx.id === id);
+                if (transaction._isSuspicious) {
+                    setSuspiciousFound(prev => prev + 1);
+                    addSeregaComment("Верно! Это явно что-то нечистое.");
+                } else {
+                    addSeregaComment("Эээ... Ты уверен? Это выглядит нормально.");
+                }
+
+                // Проверка на завершение игры
+                if (suspiciousFound + 1 >= 3) {
+                    handleGameFinish(true);
+                }
+            }
+        }
+
+        function handleDecryptField(transactionId, field) {
+            if (decryptAttempts <= 0) return;
+
+            setDecryptAttempts(prev => prev - 1);
+
+            setCleanupGameData(prev => {
+                return prev.map(tx => {
+                    if (tx.id === transactionId) {
+                        return {
+                            ...tx,
+                            [field]: field === 'ip' ? tx._realIp : tx._realDevice
+                        };
+                    }
+                    return tx;
+                });
+            });
+
+            // Добавляем комментарий от Серёги
+            addSeregaComment(field === 'ip'
+                ? "Хм... Это VPN или прокси. Подозрительно!"
+                : "Старое устройство или эмулятор. Нечисто!");
+        }
+
+        function handleAddToArchive(id) {
+            if (personalArchive.includes(id)) return;
+
+            setPersonalArchive(prev => [...prev, id]);
+            addSeregaComment("Опасно... но может пригодиться.");
+        }
+
+        function handleGameFinish(success) {
+            if (success) {
+                const correctMarks = cleanupGameData.filter(tx =>
+                    markedTransactions.includes(tx.id) && tx._isSuspicious
+                ).length;
+
+                const score = Math.min(3, correctMarks);
+
+                setGameResult('success');
+                addSeregaComment(`Уровень ${currentLevel} пройден! Найдено ${score} из 3 аномалий.`);
+
+                // Отправка результата на сервер
+                const token = localStorage.getItem('token');
+                fetch('/api/cleanup-game/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        success,
+                        score,
+                        markedTransactions,
+                        personalArchive,
+                        level: currentLevel
+                    })
+                });
+
+                // Если это 5 уровень - завершаем игру
+                if (currentLevel >= 5) {
+                    setTimeout(() => {
+                        setGameResult('complete');
+                        setShowCleanupGame(false);
+                    }, 3000);
+                } else {
+                    // Иначе загружаем следующий уровень
+                    setTimeout(() => {
+                        setCurrentLevel(prev => prev + 1);
+                        loadCleanupGame();
+                    }, 3000);
+                }
+            } else {
+                setGameResult('fail');
+                addSeregaComment('Время вышло! Попробуй еще раз.');
+            }
+        }
+
+
+        // Добавляем кнопку для запуска игры в интерфейс
+        const cleanupGameButton = (
+            <button
+                style={{
+                    position: 'absolute',
+                    top: 20,
+                    right: 180,
+                    zIndex: 1000,
+                    padding: '10px 18px',
+                    background: '#d35400',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                }}
+                onClick={loadCleanupGame}
+            >
+                Чистка или компромат
+            </button>
+        );
+
+
+        const buttonStyle = {
+            padding: '10px 20px',
+            background: '#444',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer'
+            /// конец изменения ///
+        };
+        const loader = new GLTFLoader();
+        // базовая геометрия для объектов типа "chair"
+        const baseChairMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ color: 0x888888 })
+        );
+        const enterInterior = async (houseId) => {
+            // 0. проверяем наличие токена
+            const token = localStorage.getItem('token');
+            if (!token) {
+                alert('Пожалуйста, войдите в систему, чтобы войти в здание');
+                return;
+            }
+            try {
+                // 1. получить interiorId
+                let res = await fetch(
+                    `/api/city_objects/${houseId}/interior`,
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                        credentials: 'include',
+                        cache: 'no-cache'
+                    }
+                );
+                if (!res.ok) {
+                    const errText = await res.text();
+                    console.error(`Ошибка ${res.status} при получении interior_id: ${errText}`);
+                    alert(`Не удалось получить данные интерьера: ${errText}`);
+                    return;
+                }
+                let { interiorId } = await res.json();
+
+                if (!interiorId || interiorId < 1) {
+                    alert('Для этого здания не задан интерьер');
+                    return;
+                }
+
+                // 2. получить путь к glb и список объектов внутри
+                res = await fetch(
+                    `/api/interiors/${interiorId}/definition`,
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                        credentials: 'include',
+                        cache: 'no-cache'
+                    }
+                );
+                if (!res.ok) {
+                    const errText = await res.text();
+                    console.error(`Ошибка ${res.status} при загрузке определения интерьера: ${errText}`);
+                    alert(`Не удалось загрузить определение интерьера: ${errText}`);
+                    return;
+                }
+                const { glb, objects } = await res.json();
+
+                // 3. загрузить сам интерьер (glb)
+                const baseUrl = window.location.origin;             // например "http://37.27.238.225:4000"
+                const glbUrl = baseUrl + glb;                      // "/models/interiors/…"
+                console.log('Loading GLB from', glbUrl);
+                loader.load(glbUrl, (gltf) => {
+                    // удалить городскую группу от рендера
+
+                    const scene = sceneRef.current;
+
+                    // прячем мир и сохраняем позицию игрока
+                    savedPositionRef.current.copy(playerRef.current.position);
+                    toggleWorldVisibility(false);
+
+
+                    // создать новую группу для интерьера
+                    const intGroup = new THREE.Group();
+                    intGroup.name = 'interiorGroup';
+                    intGroup.add(gltf.scene);
+
+                    // 4. добавить «мебель» и другие объекты
+                    objects.forEach(o => {
+                        let mesh;
+                        if (o.type === 'chair') {
+                            // пример: клонируем некий базовый меш
+                            mesh = baseChairMesh.clone();
+                        } else {
+                            // простой куб, если тип неизвестен
+                            mesh = new THREE.Mesh(
+                                new THREE.BoxGeometry(1, 1, 1),
+                                new THREE.MeshStandardMaterial({ color: 0x888888 })
+                            );
+                        }
+                        mesh.position.set(o.x, o.y, o.z);
+                        mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+                        mesh.scale.set(o.scale, o.scale, o.scale);
+                        intGroup.add(mesh);
+                    });
+
+                    // добавить группу интерьера в сцену и сохранить ссылку
+                    scene.add(intGroup);
+                    interiorGroupRef.current = intGroup;
+                    setInteriorGroup(intGroup);
+                    playerRef.current.position.set(0, 0, 0);
+                    setIsInInterior(true);
+                    setSelectedHouse(null);
+                }, undefined, (err) => console.error(err));
+            } catch (e) {
+                console.error('Failed to enter interior:', e);
+            }
+        };
+
+        const handleAnswerSelect = (answer) => {
+            if (answer.end) {
+                /// начало изменения ///
+                const {
+                    currentDialog,
+                    dialogIndex,
+                    showDialog,
+                    formData,
+                    currentForm,
+                    loadDialog,
+                    handleAnswerSelect,
+                    handleFormSubmit,
+                    handleFormChange,
+                    /// конец изменения ///
+                    setShowDialog(false);
+
+                /// начало изменения ///
+                setShowDialog
+            } = useDialogManager();
+            /// конец изменения ///
         } else if (answer.next !== undefined) {
             // Если следующий узел - форма
             if (typeof answer.next === 'string' && answer.next.startsWith('form_')) {
@@ -218,6 +571,11 @@ function Game({ avatarUrl, gender }) {
             setShowDialog(false);
         }
     };
+    --
+
+/// начало изменения ///
+
+/// конец изменения ///
     // Добавьте эту функцию для обработки отправки формы
     const handleFormSubmit = (e) => {
         e.preventDefault();
@@ -296,21 +654,21 @@ function Game({ avatarUrl, gender }) {
         setIframeUrl('');
     };
 
-  async function loadTelegramContacts() {
-  const token = localStorage.getItem('token');
-  try {
-    const res = await fetch('/api/users', {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setTelegramContacts(data);
-    } else {
-      console.error('Ошибка загрузки контактов Telegram');
-    }
-  } catch (err) {
-    console.error('Ошибка сети:', err);
-  }
+    async function loadTelegramContacts() {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch('/api/users', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setTelegramContacts(data);
+            } else {
+                console.error('Ошибка загрузки контактов Telegram');
+            }
+        } catch (err) {
+            console.error('Ошибка сети:', err);
+        }
     }
 
     // Дополняем состояния
@@ -348,6 +706,29 @@ function Game({ avatarUrl, gender }) {
         }
     }
 
+    /// начало изменения ///
+    // Добавить функцию загрузки прогресса квестов:
+    async function loadQuestsProgress() {
+        const token = localStorage.getItem('token');
+        try {
+            console.log("Попытка загрузить");
+            const res = await fetch('/api/quests/progress', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+                console.log("Попытка не удалась");
+                const data = await res.json();
+                setQuestsProgress(data);
+            } else {
+                console.error('Ошибка загрузки прогресса квестов');
+            }
+        } catch (err) {
+            console.error('Ошибка сети:', err);
+        }
+    }
+
+
+    /// конец изменения ///
     // Функция отправки сообщения
     async function sendMessage() {
         if (!activeChat || !newMessage.trim()) return;
@@ -420,1475 +801,2011 @@ function Game({ avatarUrl, gender }) {
         setUserProfile(profile);
     }, []);
 
-  //Телефон конец
+    /// начало изменения ///
+    // Загружаем профиль при монтировании
+    useEffect(() => {
+        async function loadProfile() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                try {
+                    const res = await fetch('/api/me', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    if (res.ok) {
+                        const profile = await res.json();
+                        setUserProfile(profile);
+                        sessionStorage.setItem('user_profile', JSON.stringify(profile));
+                    }
+                } catch (err) {
+                    console.error('Ошибка загрузки профиля:', err);
+                }
+            }
+        }
+        loadProfile();
+    }, []);
+    /// конец изменения ///
+    //Телефон конец
 
-  async function viewStats() {
-    if (!selectedPlayer) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`/api/players/${selectedPlayer.socketId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) {
-      console.error('Ошибка при загрузке статистики');
-      return;
-    }
-    const data = await res.json();
-    setPlayerStats(data);
-  }
-
-  async function toggleMicrophone() {
-    try {
-      if (!micEnabled) {
-        localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setMicEnabled(true);
-        socketRef.current?.emit('voiceChatToggle', { enabled: true });
-        
-         const track = localStream.current.getAudioTracks()[0];
-        Object.values(voiceConnections.current).forEach(conn => {
-          if (conn.audioSender && track) {
-            conn.audioSender.replaceTrack(track);
-          }
+    async function viewStats() {
+        if (!selectedPlayer) return;
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/players/${selectedPlayer.socketId}`, {
+            headers: { Authorization: `Bearer ${token}` }
         });
-      } else {
-        if (localStream.current) {
-          localStream.current.getTracks().forEach(track => track.stop());
+        if (!res.ok) {
+            console.error('Ошибка при загрузке статистики');
+            return;
         }
-        Object.values(voiceConnections.current).forEach(conn => {
-          if (conn.audioSender) {
-            conn.audioSender.replaceTrack(null);
-          }
-        });
-        localStream.current = null;
-        setMicEnabled(false);
-        socketRef.current?.emit('voiceChatToggle', { enabled: false });
-      }
-    } catch (err) {
-      console.error('Ошибка доступа к микрофону:', err);
-    }
-  }
-
-  async function onObjectClick(mesh) {
-  const objectId = mesh.userData.id;        // <-- USER DATA ID из city_objects
-  const token = localStorage.getItem('token');
-
-  try {
-    const resp = await fetch(
-      `/api/city_objects/${objectId}/interior`,  // <-- обязательно "/interior"
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: 'include',
-        cache: 'no-cache'
-      }
-    );
-    if (!resp.ok) {
-      console.warn(`Для объекта ${objectId} не задан interior_id (status ${resp.status})`);
-      return;
-    }
-    const { interiorId } = await resp.json();
-    if (!interiorId) return;
-
-    console.log(`Переходим в интерьер ${interiorId} из объекта ${objectId}`);
-    movePlayerToInterior(interiorId);
-  } catch (err) {
-    console.error(`Ошибка при запросе interior_id для объекта ${objectId}:`, err);
-  }
-}
-
-
-  async function openOrganizationMenu(objectId) {
-    const token = localStorage.getItem('token');
-    try {
-      const res = await fetch(
-        `/api/organizations/by-object/${objectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) {
-        throw new Error(`status ${res.status}`);
-      }
-      const data = await res.json();
-      setOrgMenu(data);
-      setSelectedHouse(null);
-    } catch (e) {
-      console.error(
-        'Не удалось загрузить меню организации для объекта',
-        objectId,
-        e
-      )
-      alert('Ошибка загрузки меню организации');
-    }
-  }
-
-
-function movePlayerToInterior(interiorId) {
-  // тут ваша логика загрузки сцены/камеры
-  Game.loadInteriorScene(interiorId);
-}
-
-  async function buyItem(key) {
-    if (!orgMenu) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`/api/organizations/${orgMenu.id}/purchase`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ itemKey: key })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setSatiety(data.satiety);
-      const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-      profile.satiety = data.satiety;
-      sessionStorage.setItem('user_profile', JSON.stringify(profile));
-    }
-  }
-  function toggleWorldVisibility(visible) {
-    groundRef.current && (groundRef.current.visible = visible);
-    cityMeshesRef.current.forEach(m => m.visible = visible);
-    Object.values(remotePlayersRef.current).forEach(p => {
-      if (p.model) p.model.visible = visible;
-    });
-  }
-
-  function createInterior() {
-    const group = new THREE.Group();
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    group.add(floor);
-
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
-    const wallGeo = new THREE.PlaneGeometry(20, 10);
-    const back = new THREE.Mesh(wallGeo, wallMat);
-    back.position.set(0, 5, -10);
-    group.add(back);
-    const front = back.clone();
-    front.position.set(0, 5, 10);
-    front.rotation.y = Math.PI;
-    group.add(front);
-    const left = back.clone();
-    left.position.set(-10, 5, 0);
-    left.rotation.y = Math.PI / 2;
-    group.add(left);
-    const right = back.clone();
-    right.position.set(10, 5, 0);
-    right.rotation.y = -Math.PI / 2;
-    group.add(right);
-
-    const light = new THREE.PointLight(0xffffff, 1);
-    light.position.set(0, 5, 0);
-    group.add(light);
-
-    return group;
-  }
-
-  function enterHouse(house) {
-    if (!house || !sceneRef.current || !playerRef.current) return;
-    const id = parseInt(house.id, 10);
-    if (id === 9) {
-      savedPositionRef.current.copy(playerRef.current.position);
-      toggleWorldVisibility(false);
-      interiorGroupRef.current = createInterior();
-      sceneRef.current.add(interiorGroupRef.current);
-      playerRef.current.position.set(0, 0, 0);
-      setSelectedHouse(null);
-      setIsInInterior(true);
-    }
-  }
-
-  function exitInterior() {
-    if (!isInInterior || !playerRef.current) return;
-    sceneRef.current.remove(interiorGroupRef.current);
-    interiorGroupRef.current = null;
-    toggleWorldVisibility(true);
-    sceneRef.current.add(cityGroupRef.current);
-    playerRef.current.position.copy(savedPositionRef.current);
-    setIsInInterior(false);
-  }
-
-  useEffect(() => {
-    console.log('[DEBUG] useEffect вызван');
-    const mount = mountRef.current;
-    if (!mount) {
-      console.log('[DEBUG] mountRef.current не определён!');
-      return;
+        const data = await res.json();
+        setPlayerStats(data);
     }
 
-    console.log('–– useEffect начало');
-
-    const baseOffset = new THREE.Vector3(-200, 150, -200);
-    const planarDist = Math.hypot(baseOffset.x, baseOffset.z);
-    const radius = Math.hypot(planarDist, baseOffset.y);
-    const baseAzimuth = Math.atan2(baseOffset.z, baseOffset.x);
-    const basePolar = Math.atan2(baseOffset.y, planarDist);
-
-    let cameraPitchOffset = 0;
-    const maxPitch = THREE.MathUtils.degToRad(10);
-
-    let zoom = 10;
-    const minZoom = zoom * 0.1;
-    const maxZoom = zoom * 3.5;
-
-    let scene, camera, renderer;
-    let player, mixer;
-    let idleAction, walkAction, currentAction;
-    let remotePlayers = remotePlayersRef.current;
-    let obstacles = [];
-    let destination = null;
-    const moveSpeed = 5;
-    const clock = new THREE.Clock();
-    const keys = {};
-      let npcMeshes = [];
-    const territorySize = 500;
-    const boundary = territorySize / 2;
-    const gridSize = 300;
-    const nodeSize = territorySize / gridSize;
-
-    let pathfinderGrid;
-    let currentPath = []; 
-    let pathIndex = 0;
-    let groundPlane;
-    let destinationMarker;
-
-    const token = localStorage.getItem('token');
-    socketRef.current = io({
-    transports: ['websocket','polling'],
-      auth: { token }
-    });
-    const socket = socketRef.current;
-
-    console.log('socket инстанс:', socket);
-    socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
-    socket.on('connect_error', err => console.error('Socket connect_error:', err));
-    socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
-    const gltfLoader = new GLTFLoader();
-    const animLoader = new GLTFLoader();
-
-    async function loadPlayerModel(avatarUrl) {
-      return new Promise((resolve, reject) => {
-        gltfLoader.load(avatarUrl, (gltf) => {
-          if (!gltf.scene) return reject('GLTF.scene отсутствует');
-          resolve(gltf);
-        }, undefined, (err) => reject(err));
-      });
-    }
-
-    async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
-      let model;
-      try {
-        if (!avatarURL) throw new Error('no avatarURL');
-        const gltf = await loadPlayerModel(avatarURL);
-        model = gltf.scene;
-      } catch (e) {
-        console.warn(`Не удалось загрузить аватар ${id}, рисуем сферу`, e);
-        model = new THREE.Mesh(
-          new THREE.SphereGeometry(1),
-          new THREE.MeshBasicMaterial({ color: 0x888888 })
-        );
-      }
-      model.scale.set(1, 1, 1);
-      model.position.set(x, 0, z);
-      scene.add(model);
-
-      const fullname = `${firstName} ${lastName}`.trim();
-      if (fullname) {
-        const label = createPlayerLabel(fullname);
-        label.position.set(0, 2.2, 0);
-        model.add(label);
-      }
-
-      // Add voice chat icon (initially hidden)
-      const voiceIcon = createVoiceIcon();
-      voiceIcon.position.set(0, 2.7, 0);
-      voiceIcon.visible = false;
-      model.add(voiceIcon);
-      voiceIcons.current[id] = voiceIcon;
-
-      const mixerRemote = new THREE.AnimationMixer(model);
-
-      const isFemale = genderRemote === 'female';
-      const animGender = isFemale ? 'feminine' : 'masculine';
-
-      const idleFile = isFemale ? 'F_Standing_Idle_001.glb' : 'M_Standing_Idle_001.glb';
-      const walkFile = isFemale ? 'F_Walk_002.glb' : 'M_Walk_001.glb';
-
-      const idlePath = `/animations/${animGender}/glb/idle/${idleFile}`;
-      const walkPath = `/animations/${animGender}/glb/locomotion/${walkFile}`;
-
-      const [idleGltf, walkGltf] = await Promise.all([
-        animLoader.loadAsync(idlePath),
-        animLoader.loadAsync(walkPath)
-      ]);
-
-      idleGltf.animations.forEach(stripPositionTracks);
-      walkGltf.animations.forEach(stripPositionTracks);
-
-      const remoteIdleAction = mixerRemote.clipAction(idleGltf.animations[0], model);
-      const remoteWalkAction = mixerRemote.clipAction(walkGltf.animations[0], model);
-
-      remoteIdleAction.play();
-
-      remotePlayers[id] = {
-        model,
-        mixer: mixerRemote,
-        idleAction: remoteIdleAction,
-        walkAction: remoteWalkAction,
-        currentAction: remoteIdleAction,
-        firstName,
-        lastName,
-        gender: genderRemote,
-        avatarURL,
-        _idleTimeout: null
-      };
-
-      remotePlayers[id].walkAction.setEffectiveTimeScale(0.6);
-    }
-
-    function createVoiceIcon() {
-      const canvas = document.createElement('canvas');
-      canvas.width = 64;
-      canvas.height = 64;
-      const ctx = canvas.getContext('2d');
-
-      ctx.fillStyle = '#00ff00';
-      ctx.beginPath();
-      ctx.arc(32, 32, 20, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.fillStyle = '#000';
-      ctx.font = '24px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🎤', 32, 32);
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-
-      const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-      const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.scale.set(0.5, 0.5, 1);
-      return sprite;
-    }
-
-    async function initiateVoiceChat(peerId) {
-      if (voiceConnections.current[peerId]) return;
-
-      const peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-
-
-      voiceConnections.current[peerId] = {
-        peerConnection,
-        audioElement: document.createElement('audio'),
-        pendingCandidates: [],
-        audioSender: null
-      };
-
-      voiceConnections.current[peerId].audioElement.autoplay = true;
-      document.body.appendChild(voiceConnections.current[peerId].audioElement);
-
-      peerConnection.ontrack = (event) => {
-        voiceConnections.current[peerId].audioElement.srcObject = event.streams[0];
-      };
-
-      // В функции initiateVoiceChat, перед peerConnection.onicecandidate, добавьте (18.05.2025):
-      voiceConnections.current[peerId].pendingCandidates = [];
-
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit('voiceChatIceCandidate', {
-            to: peerId,
-            candidate: event.candidate
-          });
-        }
-      };
-
-      peerConnection.onconnectionstatechange = () => {
-        if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
-          cleanupVoiceConnection(peerId);
-        }
-      };
-
-      try {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('voiceChatOffer', { to: peerId, offer });
-      } catch (err) {
-        console.error('Ошибка создания WebRTC предложения:', err);
-      }
-    }
-     
-    function cleanupVoiceConnection(peerId) {
-      if (voiceConnections.current[peerId]) {
-        const conn = voiceConnections.current[peerId];
+    async function toggleMicrophone() {
         try {
-          conn.audioSender?.replaceTrack(null);
-        } catch {}
-        conn.peerConnection.close();
-        conn.audioElement.remove();
-        delete voiceConnections.current[peerId];
-      }
+            if (!micEnabled) {
+                localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+                setMicEnabled(true);
+                socketRef.current?.emit('voiceChatToggle', { enabled: true });
+
+                const track = localStream.current.getAudioTracks()[0];
+                Object.values(voiceConnections.current).forEach(conn => {
+                    if (conn.audioSender && track) {
+                        conn.audioSender.replaceTrack(track);
+                    }
+                });
+            } else {
+                if (localStream.current) {
+                    localStream.current.getTracks().forEach(track => track.stop());
+                }
+                Object.values(voiceConnections.current).forEach(conn => {
+                    if (conn.audioSender) {
+                        conn.audioSender.replaceTrack(null);
+                    }
+                });
+                localStream.current = null;
+                setMicEnabled(false);
+                socketRef.current?.emit('voiceChatToggle', { enabled: false });
+            }
+        } catch (err) {
+            console.error('Ошибка доступа к микрофону:', err);
+        }
     }
 
-    socket.on('voiceChatNearby', ({ playerId }) => {
-      if (remotePlayers[playerId] && !voiceConnections.current[playerId]) {
-        if (socket.id < playerId) {
-          initiateVoiceChat(playerId);
+    async function onObjectClick(mesh) {
+        const objectId = mesh.userData.id;        // <-- USER DATA ID из city_objects
+        const token = localStorage.getItem('token');
+
+        try {
+            const resp = await fetch(
+                `/api/city_objects/${objectId}/interior`,  // <-- обязательно "/interior"
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'include',
+                    cache: 'no-cache'
+                }
+            );
+            if (!resp.ok) {
+                console.warn(`Для объекта ${objectId} не задан interior_id (status ${resp.status})`);
+                return;
+            }
+            const { interiorId } = await resp.json();
+            if (!interiorId) return;
+
+            console.log(`Переходим в интерьер ${interiorId} из объекта ${objectId}`);
+            movePlayerToInterior(interiorId);
+        } catch (err) {
+            console.error(`Ошибка при запросе interior_id для объекта ${objectId}:`, err);
         }
-      }
-    });
+    }
 
-    socket.on('voiceChatOffer', async ({ from, offer }) => {
-      if (!voiceConnections.current[from]) {
-        const peerConnection = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+
+    async function openOrganizationMenu(objectId) {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(
+                `/api/organizations/by-object/${objectId}`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (!res.ok) {
+                throw new Error(`status ${res.status}`);
+            }
+            const data = await res.json();
+            setOrgMenu(data);
+            setSelectedHouse(null);
+        } catch (e) {
+            console.error(
+                'Не удалось загрузить меню организации для объекта',
+                objectId,
+                e
+            )
+            alert('Ошибка загрузки меню организации');
+        }
+    }
+
+
+    function movePlayerToInterior(interiorId) {
+        // тут ваша логика загрузки сцены/камеры
+        Game.loadInteriorScene(interiorId);
+    }
+
+    async function buyItem(key) {
+        if (!orgMenu) return;
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/organizations/${orgMenu.id}/purchase`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ itemKey: key })
         });
+        if (res.ok) {
+            const data = await res.json();
+            setSatiety(data.satiety);
+            const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+            profile.satiety = data.satiety;
+            sessionStorage.setItem('user_profile', JSON.stringify(profile));
+        }
+    }
+    function toggleWorldVisibility(visible) {
+        groundRef.current && (groundRef.current.visible = visible);
+        cityMeshesRef.current.forEach(m => m.visible = visible);
+        Object.values(remotePlayersRef.current).forEach(p => {
+            if (p.model) p.model.visible = visible;
+        });
+    }
 
-        voiceConnections.current[from] = {
-          peerConnection,
-          audioElement: document.createElement('audio'),
-          pendingCandidates: [],
-          audioSender: null
-        };
+    function createInterior() {
+        const group = new THREE.Group();
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        group.add(floor);
 
-        voiceConnections.current[from].audioElement.autoplay = true;
-        document.body.appendChild(voiceConnections.current[from].audioElement);
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
+        const wallGeo = new THREE.PlaneGeometry(20, 10);
+        const back = new THREE.Mesh(wallGeo, wallMat);
+        back.position.set(0, 5, -10);
+        group.add(back);
+        const front = back.clone();
+        front.position.set(0, 5, 10);
+        front.rotation.y = Math.PI;
+        group.add(front);
+        const left = back.clone();
+        left.position.set(-10, 5, 0);
+        left.rotation.y = Math.PI / 2;
+        group.add(left);
+        const right = back.clone();
+        right.position.set(10, 5, 0);
+        right.rotation.y = -Math.PI / 2;
+        group.add(right);
 
-        peerConnection.ontrack = (event) => {
-          voiceConnections.current[from].audioElement.srcObject = event.streams[0];
-        };
+        const light = new THREE.PointLight(0xffffff, 1);
+        light.position.set(0, 5, 0);
+        group.add(light);
 
-        peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
-            socket.emit('voiceChatIceCandidate', {
-              to: from,
-              candidate: event.candidate
+        return group;
+    }
+
+    function enterHouse(house) {
+        if (!house || !sceneRef.current || !playerRef.current) return;
+        const id = parseInt(house.id, 10);
+        if (id === 9) {
+            savedPositionRef.current.copy(playerRef.current.position);
+            toggleWorldVisibility(false);
+            interiorGroupRef.current = createInterior();
+            sceneRef.current.add(interiorGroupRef.current);
+            playerRef.current.position.set(0, 0, 0);
+            setSelectedHouse(null);
+            setIsInInterior(true);
+        }
+    }
+
+    function exitInterior() {
+        if (!isInInterior || !playerRef.current) return;
+        sceneRef.current.remove(interiorGroupRef.current);
+        interiorGroupRef.current = null;
+        toggleWorldVisibility(true);
+        sceneRef.current.add(cityGroupRef.current);
+        playerRef.current.position.copy(savedPositionRef.current);
+        setIsInInterior(false);
+    }
+
+    useEffect(() => {
+        console.log('[DEBUG] useEffect вызван');
+        const mount = mountRef.current;
+        if (!mount) {
+            console.log('[DEBUG] mountRef.current не определён!');
+            return;
+        }
+
+        console.log('–– useEffect начало');
+
+        const baseOffset = new THREE.Vector3(-200, 150, -200);
+        const planarDist = Math.hypot(baseOffset.x, baseOffset.z);
+        const radius = Math.hypot(planarDist, baseOffset.y);
+        const baseAzimuth = Math.atan2(baseOffset.z, baseOffset.x);
+        const basePolar = Math.atan2(baseOffset.y, planarDist);
+
+        let cameraPitchOffset = 0;
+        const maxPitch = THREE.MathUtils.degToRad(10);
+
+        let zoom = 10;
+        const minZoom = zoom * 0.1;
+        const maxZoom = zoom * 3.5;
+
+        let scene, camera, renderer;
+        let player, mixer;
+        let idleAction, walkAction, currentAction;
+        let remotePlayers = remotePlayersRef.current;
+        let obstacles = [];
+        let destination = null;
+        const moveSpeed = 5;
+        const clock = new THREE.Clock();
+        const keys = {};
+        let npcMeshes = [];
+        const territorySize = 500;
+        const boundary = territorySize / 2;
+        const gridSize = 300;
+        const nodeSize = territorySize / gridSize;
+
+        let pathfinderGrid;
+        let currentPath = [];
+        let pathIndex = 0;
+        let groundPlane;
+        let destinationMarker;
+
+        const token = localStorage.getItem('token');
+        socketRef.current = io({
+            transports: ['websocket', 'polling'],
+            auth: { token }
+        });
+        const socket = socketRef.current;
+
+        console.log('socket инстанс:', socket);
+        socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
+        socket.on('connect_error', err => console.error('Socket connect_error:', err));
+        socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
+        const gltfLoader = new GLTFLoader();
+        const animLoader = new GLTFLoader();
+
+        async function loadPlayerModel(avatarUrl) {
+            return new Promise((resolve, reject) => {
+                gltfLoader.load(avatarUrl, (gltf) => {
+                    if (!gltf.scene) return reject('GLTF.scene отсутствует');
+                    resolve(gltf);
+                }, undefined, (err) => reject(err));
             });
-          }
-        };
+        }
 
-        peerConnection.onconnectionstatechange = () => {
-          if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
-            cleanupVoiceConnection(from);
-          }
-        };
-
-        try {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-          const remoteTransceiver = peerConnection.getTransceivers().find(
-            t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio'
-          );
-          if (remoteTransceiver) {
-            remoteTransceiver.direction = 'sendrecv';
-            voiceConnections.current[from].audioSender = remoteTransceiver.sender;
-            if (localStream.current) {
-              const track = localStream.current.getAudioTracks()[0];
-              if (track) {
-                await remoteTransceiver.sender.replaceTrack(track);
-              }
-            }
-          }
-          // В обработчике voiceChatOffer, после await peerConnection.setRemoteDescription, добавьте (18.05.2025):
-          const pendingCandidates = voiceConnections.current[from].pendingCandidates || [];
-          for (const candidate of pendingCandidates) {
+        async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
+            let model;
             try {
-              await voiceConnections.current[from].peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate)
-              );
-            } catch (err) {
-              console.error('Ошибка добавления буферизованного ICE кандидата:', err);
+                if (!avatarURL) throw new Error('no avatarURL');
+                const gltf = await loadPlayerModel(avatarURL);
+                model = gltf.scene;
+            } catch (e) {
+                console.warn(`Не удалось загрузить аватар ${id}, рисуем сферу`, e);
+                model = new THREE.Mesh(
+                    new THREE.SphereGeometry(1),
+                    new THREE.MeshBasicMaterial({ color: 0x888888 })
+                );
             }
-          }
-          voiceConnections.current[from].pendingCandidates = [];
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          socket.emit('voiceChatAnswer', { to: from, answer });
-        } catch (err) {
-          console.error('Ошибка обработки WebRTC предложения:', err);
-        }
-      }
-    });
+            model.scale.set(1, 1, 1);
+            model.position.set(x, 0, z);
+            scene.add(model);
 
-    socket.on('voiceChatAnswer', async ({ from, answer }) => {
-      if (voiceConnections.current[from]) {
-        try {
-          await voiceConnections.current[from].peerConnection.setRemoteDescription(
-            new RTCSessionDescription(answer)
-          );
-          const pending = voiceConnections.current[from].pendingCandidates || [];
-          for (const candidate of pending) {
-            try {
-              await voiceConnections.current[from].peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate)
-              );
-            } catch (err) {
-              console.error('Ошибка добавления буферизованного ICE кандидата:', err);
-            }
-          }
-          voiceConnections.current[from].pendingCandidates = [];
-        } catch (err) {
-          console.error('Ошибка установки WebRTC ответа:', err);
-        }
-      }
-    });
-
-
-    // Замените обработчик voiceChatIceCandidate на (18.05.2025):
-    socket.on('voiceChatIceCandidate', async ({ from, candidate }) => {
-      if (!voiceConnections.current[from]) {
-        console.warn('Соединение для', from, 'не существует, пропущен ICE кандидат');
-        return;
-      }
-
-      const peerConnection = voiceConnections.current[from].peerConnection;
-
-      if (peerConnection.remoteDescription) {
-        try {
-          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error('Ошибка добавления ICE кандидата:', err);
-        }
-      } else {
-        console.log('Буферизация ICE кандидата для', from);
-        voiceConnections.current[from].pendingCandidates.push(candidate);
-      }
-    });
-
-    socket.on('voiceChatStatus', ({ playerId, enabled }) => {
-      if (voiceIcons.current[playerId]) {
-        voiceIcons.current[playerId].visible = enabled;
-      }
-    });
-
-    socket.on('connect', () => console.log('Socket connected, id=', socket.id));
-    socket.on('currentPlayers', (players) => {
-      console.log('currentPlayers', players);
-      // Получаем cityId текущего игрока из профиля
-      const myProfile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-      const myCityId = myProfile.last_city_id || 1;
-      Object.keys(players).forEach(id => {
-        if (id === socket.id) return;
-        const { x, z, avatarURL, gender, firstName, lastName, cityId } = players[id];
-        if (cityId && cityId !== myCityId) return; // показываем только игроков своего города
-        addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName);
-      });
-      // После получения списка игроков, отправляем newPlayer о себе
-      const profile = myProfile;
-      socket.emit('newPlayer', {
-        x: player?.position?.x || 0,
-        z: player?.position?.z || 0,
-        avatarURL: avatarUrl,
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        userId: profile.id,
-        cityId: myCityId
-      });
-    });
-
-    socket.on('chatMessage', ({ playerId, name, message, position }) => {
-      console.log('← chatMessage получил:', message);
-      if (!player || !camera || !scene || !obstacles) return;
-
-      const origin = camera.position.clone();
-      const targetPos = new THREE.Vector3(position.x, player.position.y, position.z);
-      const direction = new THREE.Vector3().subVectors(targetPos, origin).normalize();
-      const raycaster = new THREE.Raycaster(origin, direction);
-      const obstacleMeshes = obstacles.map(o => o.mesh);
-      const intersects = raycaster.intersectObjects(obstacleMeshes, true);
-      const distanceToTarget = origin.distanceTo(targetPos);
-
-      if (intersects.length > 0 && intersects[0].distance < distanceToTarget) {
-        console.log(`🔕 ${name} за препятствием — сообщение скрыто`);
-        return;
-      }
-
-      const div = document.getElementById('chatMessages');
-      if (!div) return;
-
-      const p = document.createElement('p');
-      p.textContent = `${name || 'Игрок'}: ${message}`;
-      p.style.color = 'white';
-      p.style.padding = '5px';
-      p.style.margin = '2px 0';
-      p.style.fontSize = '14px';
-      p.style.borderRadius = '10px';
-      div.appendChild(p);
-      div.scrollTop = div.scrollHeight;
-    });
-
-    socket.on('playerMoved', (data) => {
-      const remote = remotePlayers[data.playerId];
-      if (!remote) return;
-
-      const newPos = new THREE.Vector3(data.x, 0, data.z);
-      const dir = new THREE.Vector3().subVectors(newPos, remote.model.position);
-      if (dir.lengthSq() > 1e-4) {
-        const angle = Math.atan2(dir.x, dir.z);
-        const targetQuat = new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(0, angle, 0)
-        );
-        remote.model.quaternion.slerp(targetQuat, 0.2);
-      }
-
-      remote.targetPosition = newPos.clone();
-
-      if (remote.currentAction !== remote.walkAction) {
-        remote.currentAction.fadeOut(0.2);
-        remote.walkAction.reset().fadeIn(0.2).play();
-        remote.currentAction = remote.walkAction;
-      }
-
-      clearTimeout(remote._idleTimeout);
-      remote._idleTimeout = setTimeout(() => {
-        if (remote.currentAction !== remote.idleAction) {
-          remote.currentAction.fadeOut(0.2);
-          remote.idleAction.reset().fadeIn(0.2).play();
-          remote.currentAction = remote.idleAction;
-        }
-      }, 500);
-
-      // Update voice chat volume based on distance
-      if (voiceConnections.current[data.playerId]) {
-        const dist = player.position.distanceTo(newPos);
-        const maxDist = 50;
-        const volume = Math.max(0, 1 - dist / maxDist);
-        voiceConnections.current[data.playerId].audioElement.volume = volume;
-      }
-    });
-
-    socket.on('newPlayer', (data) => {
-      console.log('newPlayer', data);
-      const { playerId, x, z, avatarURL, gender, firstName, lastName } = data;
-      addOtherPlayer(playerId, x, z, avatarURL, gender, firstName, lastName);
-    });
-
-    socket.on('playerDisconnected', (id) => {
-      if (remotePlayers[id]) {
-        scene.remove(remotePlayers[id].model);
-        delete remotePlayers[id];
-      }
-      if (voiceIcons.current[id]) {
-        delete voiceIcons.current[id];
-      }
-      cleanupVoiceConnection(id);
-    });
-
-    function onMouseWheel(e) {
-      e.preventDefault();
-      const delta = -e.deltaY * 0.001;
-
-      if (e.ctrlKey) {
-        cameraPitchOffset = THREE.MathUtils.clamp(
-          cameraPitchOffset + delta,
-          -maxPitch,
-          maxPitch
-        );
-      } else {
-        zoom = THREE.MathUtils.clamp(zoom * (1 + delta), minZoom, maxZoom);
-        camera.zoom = zoom;
-        camera.updateProjectionMatrix();
-      }
-    }
-
-    async function init() {
-      console.log('[DEBUG] init вызван');
-      scene = new THREE.Scene();
-      sceneRef.current = scene;
-      const aspect = window.innerWidth / window.innerHeight;
-      const d = 200;
-      camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
-      camera.position.set(200, 200, 200);
-
-      camera.zoom = zoom;
-      camera.updateProjectionMatrix();
-
-      camera.lookAt(scene.position);
-
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      mountRef.current.appendChild(renderer.domElement);
-
-      renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
-
-      const planeGeometry = new THREE.PlaneGeometry(territorySize, territorySize);
-      const planeMaterial = new THREE.MeshLambertMaterial({ color: 0x00aa00, side: THREE.DoubleSide });
-      groundPlane = new THREE.Mesh(planeGeometry, planeMaterial);
-      groundPlane.rotation.x = -Math.PI / 2;
-      scene.add(groundPlane);
-      groundRef.current = groundPlane;
-
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-      scene.add(ambientLight);
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      directionalLight.position.set(50, 100, 50);
-      scene.add(directionalLight);
-
-      const markerGeometry = new THREE.SphereGeometry(0.5, 16, 16);
-      const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-      destinationMarker = new THREE.Mesh(markerGeometry, markerMaterial);
-      destinationMarker.visible = false;
-      scene.add(destinationMarker);
-
-      const loadingManager = new THREE.LoadingManager(() => {
-        console.log("Все текстуры загружены");
-      });
-      const textureLoader = new THREE.TextureLoader(loadingManager);
-      const baseTexture = textureLoader.load('textures/base.png');
-      const customMaterial = new THREE.MeshStandardMaterial({
-        map: baseTexture,
-      });
-
-
-        const npcMixersArray = [];
-        // Добавление персонажей 
-        const npcData = [
-            { id: 'bartender', model: '/models/npc/bartender.glb', position: [30, 0, 15] },
-            { id: 'guard', model: '/models/npc/guard.glb', position: [10, 0, 40] },
-            { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [20, 0, 10] }
-        ];
-        for (const npc of npcData) {
-            try {
-                const gltf = await gltfLoader.loadAsync(npc.model);
-                const model = gltf.scene;
-                model.position.set(...npc.position);
-                model.userData.npcId = npc.id;
-                model.userData.isNpc = true;
-
-                // Добавляем метку с именем
-                const label = createPlayerLabel(npc.id === 'bartender' ? 'Бармен' : 'Стражник');
+            const fullname = `${firstName} ${lastName}`.trim();
+            if (fullname) {
+                const label = createPlayerLabel(fullname);
                 label.position.set(0, 2.2, 0);
                 model.add(label);
-                model.rotateY(Math.PI); // Развернуть персонажа 
-                scene.add(model);
-                npcMeshes.push(model); // Правильное добавление в массив
-                cityMeshesRef.current.push(model);
-
-                if (npc.id == 'Adventurer') {
-                    const clock = new THREE.Clock();
-                    let mixers;
-                    const tick = () => {
-                        model.rotation.y += 0.01;
-                        renderer.render(scene, camera);
-                        window.requestAnimationFrame(tick);
-                    }
-                    tick();
-                }
-
-            } catch (error) {
-                console.error(`Ошибка загрузки NPC ${npc.id}:`, error);
             }
 
-        }
-      // Загрузка объектов города из базы данных
-      let loadedModelsCount = 0;
-      let cityObjects = [];
-      let totalModelsToLoad = 0;
-      try {
-        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const cityId = profile.last_city_id || 1; // по умолчанию 1, если нет
-        console.log('[DEBUG] cityId для загрузки объектов:', cityId);
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/cities/${cityId}/objects`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        cityObjects = await res.json();
-        console.log('[DEBUG] Список объектов для загрузки (cityObjects):', cityObjects);
-        totalModelsToLoad = cityObjects.length;
-      } catch (e) {
-        console.error('[DEBUG] Ошибка загрузки объектов города:', e);
-        cityObjects = [];
-        totalModelsToLoad = 0;
-      }
+            // Add voice chat icon (initially hidden)
+            const voiceIcon = createVoiceIcon();
+            voiceIcon.position.set(0, 2.7, 0);
+            voiceIcon.visible = false;
+            model.add(voiceIcon);
+            voiceIcons.current[id] = voiceIcon;
 
-      console.log('[DEBUG] cityObjects:', cityObjects);
-      try {
-        cityObjects.forEach(obj => {
-          console.log('[DEBUG] Загружаю объект:', obj);
-          gltfLoader.load(
-            obj.model_url,
-            (gltf) => {
-              const model = gltf.scene;
-              model.userData = {
-                id: obj.id,                    // уникальный ID объекта
-                type: obj.name,                // название типа модели
-                organizationId: obj.organization_id, // ID организации
-                rent: obj.rent,                // стоимость аренды (если есть)
-                tax: obj.tax                   // налог (если есть)
-              };
+            const mixerRemote = new THREE.AnimationMixer(model);
 
-              model.scale.set(1, 1, 1);
-              model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
-              model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
-              model.traverse(child => {
-                if (child.isMesh) {
-                  child.material = customMaterial.clone();
-                  child.material.needsUpdate = true;
-                }
-              });
-              scene.add(model);
-              cityMeshesRef.current.push(model);
-              model.updateMatrixWorld();
-              const boundingBox = new THREE.Box3().setFromObject(model);
-              const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
-              if (isCollidable) {
-                obstacles.push({ mesh: model, box: boundingBox });
-              }
+            const isFemale = genderRemote === 'female';
+            const animGender = isFemale ? 'feminine' : 'masculine';
 
-              loadedModelsCount++;
-              console.log(`[DEBUG] Модель ${obj.name} успешно загружена (${loadedModelsCount}/${totalModelsToLoad})`);
-              if (loadedModelsCount === totalModelsToLoad) {
-                console.log('[DEBUG] Все модели загружены. Строим сетку...');
-                buildPathfindingGrid();
-              }
-            },
-            undefined,
-            (error) => {
-              console.error(`[DEBUG] Ошибка загрузки модели ${obj.name}:`, error);
-            }
-          );
-        });
-      } catch (e) {
-        console.error('[DEBUG] Ошибка в cityObjects.forEach:', e);
-      }
+            const idleFile = isFemale ? 'F_Standing_Idle_001.glb' : 'M_Standing_Idle_001.glb';
+            const walkFile = isFemale ? 'F_Walk_002.glb' : 'M_Walk_001.glb';
 
-      window.addEventListener('keydown', onKeyDown);
-      window.addEventListener('keyup', onKeyUp);
-      renderer.domElement.addEventListener('pointerdown', onDocumentMouseDown);
+            const idlePath = `/animations/${animGender}/glb/idle/${idleFile}`;
+            const walkPath = `/animations/${animGender}/glb/locomotion/${walkFile}`;
 
-      try {
-        const gltf = await loadPlayerModel(avatarUrl);
-        player = gltf.scene;
-        scene.add(player);
-        playerRef.current = player;
-        player.scale.set(1, 1, 1);
-        player.position.set(0, 0, 0);
+            const [idleGltf, walkGltf] = await Promise.all([
+                animLoader.loadAsync(idlePath),
+                animLoader.loadAsync(walkPath)
+            ]);
 
-        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+            idleGltf.animations.forEach(stripPositionTracks);
+            walkGltf.animations.forEach(stripPositionTracks);
 
-        mountRef.current = myName;
+            const remoteIdleAction = mixerRemote.clipAction(idleGltf.animations[0], model);
+            const remoteWalkAction = mixerRemote.clipAction(walkGltf.animations[0], model);
 
-        const nameLabel = createPlayerLabel(myName);
-        nameLabel.position.set(0, 2.2, 0);
-        player.add(nameLabel);
+            remoteIdleAction.play();
 
-        mixer = new THREE.AnimationMixer(player);
+            remotePlayers[id] = {
+                model,
+                mixer: mixerRemote,
+                idleAction: remoteIdleAction,
+                walkAction: remoteWalkAction,
+                currentAction: remoteIdleAction,
+                firstName,
+                lastName,
+                gender: genderRemote,
+                avatarURL,
+                _idleTimeout: null
+            };
 
-        const isFemale = gender === 'female';
-        const animGender = isFemale ? 'feminine' : 'masculine';
-
-        const idlePath = `/animations/${animGender}/glb/idle/${
-          isFemale ? 'F_Standing_Idle_001.glb' : 'M_Standing_Idle_001.glb'
-        }`;
-        const walkPath = `/animations/${animGender}/glb/locomotion/${
-          isFemale ? 'F_Walk_002.glb' : 'M_Walk_001.glb'
-        }`;
-
-        const [idleGltf, walkGltf] = await Promise.all([
-          animLoader.loadAsync(idlePath),
-          animLoader.loadAsync(walkPath)
-        ]);
-
-        idleGltf.animations.forEach(stripPositionTracks);
-        walkGltf.animations.forEach(stripPositionTracks);
-
-        console.log('Idle GLB анимации:', idleGltf.animations);
-        console.log('Walk GLB анимации:', walkGltf.animations);
-
-        idleAction = mixer.clipAction(idleGltf.animations[0], player);
-        walkAction = mixer.clipAction(walkGltf.animations[0], player);
-
-        idleAction.play();
-        currentAction = idleAction;
-
-        updateCameraFollow();
-
-        socketRef.current?.emit('newPlayer', {
-          x: player.position.x,
-          z: player.position.z,
-          avatarURL: avatarUrl,
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-          userId: profile.id
-        });
-      } catch (err) {
-        console.error("Ошибка загрузки модели игрока:", err);
-      }
-    }
-
-    function stripPositionTracks(clip) {
-      clip.tracks = clip.tracks.filter(track => !track.name.endsWith('.position'));
-      return clip;
-    }
-
-    function computePath(fromVec3, toVec3) {
-      const startX = Math.floor((fromVec3.x + boundary) / nodeSize);
-      const startZ = Math.floor((fromVec3.z + boundary) / nodeSize);
-      const endX = Math.floor((toVec3.x + boundary) / nodeSize);
-      const endZ = Math.floor((toVec3.z + boundary) / nodeSize);
-
-      const finder = new PF.AStarFinder({
-        allowDiagonal: true,
-        dontCrossCorners: true,
-        diagonalMovement: PF.DiagonalMovement.OnlyWhenNoObstacles
-      });
-      const gridClone = pathfinderGrid.clone();
-
-      if (!gridClone.isWalkableAt(startX, startZ)) {
-        gridClone.setWalkableAt(startX, startZ, true);
-      }
-
-      if (!gridClone.isWalkableAt(endX, endZ)) {
-        gridClone.setWalkableAt(endX, endZ, true);
-      }
-
-      const rawPath = finder.findPath(startX, startZ, endX, endZ, gridClone);
-      if (!rawPath.length) return [];
-
-      const smooth = PF.Util.smoothenPath(gridClone, rawPath);
-      return smooth.map(([x, z]) => new THREE.Vector3(
-        x * nodeSize - boundary + nodeSize / 2,
-        fromVec3.y,
-        z * nodeSize - boundary + nodeSize / 2
-      ));
-    }
-
-    function buildPathfindingGrid() {
-      pathfinderGrid = new PF.Grid(gridSize, gridSize);
-
-      obstacles.forEach(o => {
-        const box = new THREE.Box3().setFromObject(o.mesh);
-
-        let minX = Math.floor((box.min.x + boundary) / nodeSize);
-        let maxX = Math.floor((box.max.x + boundary) / nodeSize);
-        let minZ = Math.floor((box.min.z + boundary) / nodeSize);
-        let maxZ = Math.floor((box.max.z + boundary) / nodeSize);
-
-        minX = Math.max(0, Math.min(gridSize - 1, minX));
-        maxX = Math.max(0, Math.min(gridSize - 1, maxX));
-        minZ = Math.max(0, Math.min(gridSize - 1, minZ));
-        maxZ = Math.max(0, Math.min(gridSize - 1, maxZ));
-
-        for (let x = minX; x <= maxX; x++) {
-          for (let z = minZ; z <= maxZ; z++) {
-            pathfinderGrid.setWalkableAt(x, z, false);
-          }
-        }
-      });
-    }
-
-      // В функции onDocumentMouseDown заменяем существующий код на:
-      async function onDocumentMouseDown(event) {
-        if (!player) return;
-        event.preventDefault();
-
-        const rect = renderer.domElement.getBoundingClientRect();
-        const mouse = new THREE.Vector2(
-          ((event.clientX - rect.left) / rect.width) * 2 - 1,
-          -((event.clientY - rect.top) / rect.height) * 2 + 1
-        );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
-
-        // NPC
-        const npcHit = raycaster.intersectObjects(npcMeshes, true);
-        if (npcHit.length) {
-          let root = npcHit[0].object;
-          while (root.parent && !root.userData.isNpc) root = root.parent;
-          if (root.userData.npcId) {
-            loadDialog(root.userData.npcId);
-            return;
-          }
+            remotePlayers[id].walkAction.setEffectiveTimeScale(0.6);
         }
 
-        // Здания/объекты
-        const houseHit = raycaster.intersectObjects(obstacles.map(o => o.mesh), true);
-        if (houseHit.length) {
-          let obj = houseHit[0].object;
-          while (obj && !obj.userData.id) obj = obj.parent;
-          if (obj && obj.userData.id) {
-            setSelectedHouse(obj.userData.id);   // сразу телепорт в интерьер
-            return;
-          }
+        function createVoiceIcon() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(32, 32, 20, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎤', 32, 32);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(0.5, 0.5, 1);
+            return sprite;
         }
 
-          // 3. Проверка игроков
-          const remoteModels = Object.values(remotePlayers).map(r => r.model);
-          const playerIntersects = raycaster.intersectObjects(remoteModels, true);
-          if (playerIntersects.length) {
-              let mesh = playerIntersects[0].object;
-              while (mesh && !remoteModels.includes(mesh)) mesh = mesh.parent;
-              const entry = Object.entries(remotePlayers).find(([, r]) => r.model === mesh);
-              if (entry) {
-                  const [id, r] = entry;
-                  setSelectedPlayer({ socketId: id, firstName: r.firstName, lastName: r.lastName });
-                  setPlayerStats(null);
-                  return;
-              }
-          }
+        async function initiateVoiceChat(peerId) {
+            if (voiceConnections.current[peerId]) return;
 
-          // Сброс выделений
-          setSelectedHouse(null);
-          setOrgMenu(null);
-          setSelectedPlayer(null);
-
-          // 4. Проверка земли
-          const groundIntersects = raycaster.intersectObject(groundPlane);
-          if (groundIntersects.length === 0) {
-              console.log("Клик не попал по плоскости");
-              return;
-          }
-
-          destination = groundIntersects[0].point.clone();
-          destination.y = player.position.y;
-
-          const newPath = computePath(player.position, destination);
-          if (newPath.length === 0) {
-              console.warn("Путь не найден");
-              return;
-          }
-          currentPath = newPath;
-          pathIndex = 0;
-
-          if (destinationMarker) {
-              destinationMarker.position.copy(destination);
-              destinationMarker.visible = true;
-          }
-      }
-
-    function onKeyDown(event) {
-      keys[event.key] = true;
-      destination = null;
-      destinationMarker.visible = false;
-    }
-
-    function onKeyUp(event) {
-      keys[event.key] = false;
-    }
-
-    function createPlayerLabel(text) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 256;
-      canvas.height = 64;
-      const ctx = canvas.getContext('2d');
-
-      const fontSize = 15;
-      ctx.fillStyle = 'white';
-      ctx.font = `${fontSize}px Arial`;
-
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-
-      const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-      const sprite = new THREE.Sprite(spriteMaterial);
-
-      sprite.scale.set(3, 0.75, 1);
-
-      return sprite;
-    }
-
-    function switchAnimation(newAction) {
-      if (!newAction || !currentAction || newAction === currentAction) return;
-
-      currentAction.fadeOut(0.2);
-      newAction.reset().fadeIn(0.2).play();
-      currentAction = newAction;
-    }
-
-    function canMove(newPosition) {
-      const halfSize = 1;
-      const playerMin = new THREE.Vector2(newPosition.x - halfSize, newPosition.z - halfSize);
-      const playerMax = new THREE.Vector2(newPosition.x + halfSize, newPosition.z + halfSize);
-
-      for (let i = 0; i < obstacles.length; i++) {
-        obstacles[i].mesh.updateMatrixWorld();
-        const box = new THREE.Box3().setFromObject(obstacles[i].mesh);
-        const obstacleMin = new THREE.Vector2(box.min.x, box.min.z);
-        const obstacleMax = new THREE.Vector2(box.max.x, box.max.z);
-        if ((playerMin.x <= obstacleMax.x && playerMax.x >= obstacleMin.x) &&
-            (playerMin.y <= obstacleMax.y && playerMax.y >= obstacleMin.y)) {
-          return false;
-        }
-      }
-      return true;
-    }
-
-    function updateDestinationMovement(delta) {
-      if (!player || currentPath.length === 0 || pathIndex >= currentPath.length) return;
-
-      const target = currentPath[pathIndex];
-      const direction = new THREE.Vector3().subVectors(target, player.position);
-      direction.y = 0;
-      const distance = direction.length();
-
-      const stepDistance = moveSpeed * delta;
-      if (distance < stepDistance) {
-        player.position.copy(target);
-        pathIndex++;
-        if (pathIndex >= currentPath.length) {
-          currentPath = [];
-          destination = null;
-          if (currentAction !== idleAction) {
-            currentAction.fadeOut(0.2);
-            idleAction.reset().fadeIn(0.2).play();
-            currentAction = idleAction;
-          }
-        }
-        return;
-      }
-
-      direction.normalize();
-      const step = direction.multiplyScalar(stepDistance);
-      const nextPos = player.position.clone().add(step);
-
-      if (canMove(nextPos)) {
-        player.position.add(step);
-        const angle = Math.atan2(direction.x, direction.z);
-        const targetQuat = new THREE.Quaternion()
-          .setFromEuler(new THREE.Euler(0, angle, 0));
-        player.quaternion.slerp(targetQuat, Math.min(1, 10 * delta));
-        socketRef.current?.emit('playerMovement', { x: player.position.x, z: player.position.z });
-
-        if (currentAction !== walkAction) {
-          currentAction.fadeOut(0.2);
-          walkAction.reset().fadeIn(0.2).play();
-          currentAction = walkAction;
-        }
-      } else {
-        console.warn('hit obstacle, пропускаем узел');
-        if (currentAction !== idleAction) {
-          console.log('Не удалось найти путь, стою');
-          currentAction.fadeOut(0.2);
-          idleAction.reset().fadeIn(0.2).play();
-          currentAction = idleAction;
-        }
-        pathIndex++;
-        return;
-      }
-    }
-
-    function updateTransparency() {
-      if (!player) return;
-      obstacles.forEach(obstacle => {
-        obstacle.mesh.traverse(child => {
-          if (child.isMesh && child.material) {
-            child.material.transparent = false;
-            child.material.opacity = 1.0;
-            child.material.depthWrite = true;
-            child.material.needsUpdate = true;
-          }
-        });
-      });
-      const direction = new THREE.Vector3().subVectors(player.position, camera.position).normalize();
-      const raycaster = new THREE.Raycaster(camera.position, direction);
-      const camToPlayerDist = camera.position.distanceTo(player.position);
-      const intersects = raycaster.intersectObjects(obstacles.map(ob => ob.mesh), true);
-      intersects.forEach(hit => {
-        if (hit.object === player) return;
-        if (hit.distance < camToPlayerDist) {
-          if (hit.object.parent === scene) {
-            if (hit.object.isMesh && hit.object.material) {
-              hit.object.material.transparent = true;
-              hit.object.material.opacity = 0.3;
-              hit.object.material.depthWrite = false;
-              hit.object.material.needsUpdate = true;
-            }
-          } else {
-            hit.object.parent.traverse(child => {
-              if (child.isMesh && child.material) {
-                child.material.transparent = true;
-                child.material.opacity = 0.3;
-                child.material.depthWrite = false;
-                child.material.needsUpdate = true;
-              }
+            const peerConnection = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             });
-          }
+
+
+            voiceConnections.current[peerId] = {
+                peerConnection,
+                audioElement: document.createElement('audio'),
+                pendingCandidates: [],
+                audioSender: null
+            };
+
+            voiceConnections.current[peerId].audioElement.autoplay = true;
+            document.body.appendChild(voiceConnections.current[peerId].audioElement);
+
+            peerConnection.ontrack = (event) => {
+                voiceConnections.current[peerId].audioElement.srcObject = event.streams[0];
+            };
+
+            // В функции initiateVoiceChat, перед peerConnection.onicecandidate, добавьте (18.05.2025):
+            voiceConnections.current[peerId].pendingCandidates = [];
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('voiceChatIceCandidate', {
+                        to: peerId,
+                        candidate: event.candidate
+                    });
+                }
+            };
+
+            peerConnection.onconnectionstatechange = () => {
+                if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+                    cleanupVoiceConnection(peerId);
+                }
+            };
+
+            try {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                socket.emit('voiceChatOffer', { to: peerId, offer });
+            } catch (err) {
+                console.error('Ошибка создания WebRTC предложения:', err);
+            }
         }
-      });
-    }
 
-    function updateCameraFollow() {
-      if (!player) return;
-
-      const target = player.position.clone();
-
-      const polar = basePolar + cameraPitchOffset;
-
-      const planar = radius * Math.cos(polar);
-      const yOff = radius * Math.sin(polar);
-
-      const xOff = planar * Math.cos(baseAzimuth);
-      const zOff = planar * Math.sin(baseAzimuth);
-
-      camera.position.set(
-        target.x + xOff,
-        target.y + yOff,
-        target.z + zOff
-      );
-
-      camera.lookAt(target);
-    }
-
-    function animate() {
-      requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      updateDestinationMovement(delta);
-      if (mixer) mixer.update(delta);
-      updateTransparency();
-        updateCameraFollow();
-      for (let id in remotePlayers) {
-        const r = remotePlayers[id];
-        if (r.targetPosition) {
-          r.model.position.lerp(r.targetPosition, 0.1);
+        function cleanupVoiceConnection(peerId) {
+            if (voiceConnections.current[peerId]) {
+                const conn = voiceConnections.current[peerId];
+                try {
+                    conn.audioSender?.replaceTrack(null);
+                } catch { }
+                conn.peerConnection.close();
+                conn.audioElement.remove();
+                delete voiceConnections.current[peerId];
+            }
         }
-        r.mixer.update(delta);
-      }
-      renderer.render(scene, camera);
+
+        socket.on('voiceChatNearby', ({ playerId }) => {
+            if (remotePlayers[playerId] && !voiceConnections.current[playerId]) {
+                if (socket.id < playerId) {
+                    initiateVoiceChat(playerId);
+                }
+            }
+        });
+
+        socket.on('voiceChatOffer', async ({ from, offer }) => {
+            if (!voiceConnections.current[from]) {
+                const peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                voiceConnections.current[from] = {
+                    peerConnection,
+                    audioElement: document.createElement('audio'),
+                    pendingCandidates: [],
+                    audioSender: null
+                };
+
+                voiceConnections.current[from].audioElement.autoplay = true;
+                document.body.appendChild(voiceConnections.current[from].audioElement);
+
+                peerConnection.ontrack = (event) => {
+                    voiceConnections.current[from].audioElement.srcObject = event.streams[0];
+                };
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        socket.emit('voiceChatIceCandidate', {
+                            to: from,
+                            candidate: event.candidate
+                        });
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+                        cleanupVoiceConnection(from);
+                    }
+                };
+
+                try {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                    const remoteTransceiver = peerConnection.getTransceivers().find(
+                        t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio'
+                    );
+                    if (remoteTransceiver) {
+                        remoteTransceiver.direction = 'sendrecv';
+                        voiceConnections.current[from].audioSender = remoteTransceiver.sender;
+                        if (localStream.current) {
+                            const track = localStream.current.getAudioTracks()[0];
+                            if (track) {
+                                await remoteTransceiver.sender.replaceTrack(track);
+                            }
+                        }
+                    }
+                    // В обработчике voiceChatOffer, после await peerConnection.setRemoteDescription, добавьте (18.05.2025):
+                    const pendingCandidates = voiceConnections.current[from].pendingCandidates || [];
+                    for (const candidate of pendingCandidates) {
+                        try {
+                            await voiceConnections.current[from].peerConnection.addIceCandidate(
+                                new RTCIceCandidate(candidate)
+                            );
+                        } catch (err) {
+                            console.error('Ошибка добавления буферизованного ICE кандидата:', err);
+                        }
+                    }
+                    voiceConnections.current[from].pendingCandidates = [];
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    socket.emit('voiceChatAnswer', { to: from, answer });
+                } catch (err) {
+                    console.error('Ошибка обработки WebRTC предложения:', err);
+                }
+            }
+        });
+
+        socket.on('voiceChatAnswer', async ({ from, answer }) => {
+            if (voiceConnections.current[from]) {
+                try {
+                    await voiceConnections.current[from].peerConnection.setRemoteDescription(
+                        new RTCSessionDescription(answer)
+                    );
+                    const pending = voiceConnections.current[from].pendingCandidates || [];
+                    for (const candidate of pending) {
+                        try {
+                            await voiceConnections.current[from].peerConnection.addIceCandidate(
+                                new RTCIceCandidate(candidate)
+                            );
+                        } catch (err) {
+                            console.error('Ошибка добавления буферизованного ICE кандидата:', err);
+                        }
+                    }
+                    voiceConnections.current[from].pendingCandidates = [];
+                } catch (err) {
+                    console.error('Ошибка установки WebRTC ответа:', err);
+                }
+            }
+        });
+
+
+        // Замените обработчик voiceChatIceCandidate на (18.05.2025):
+        socket.on('voiceChatIceCandidate', async ({ from, candidate }) => {
+            if (!voiceConnections.current[from]) {
+                console.warn('Соединение для', from, 'не существует, пропущен ICE кандидат');
+                return;
+            }
+
+            const peerConnection = voiceConnections.current[from].peerConnection;
+
+            if (peerConnection.remoteDescription) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (err) {
+                    console.error('Ошибка добавления ICE кандидата:', err);
+                }
+            } else {
+                console.log('Буферизация ICE кандидата для', from);
+                voiceConnections.current[from].pendingCandidates.push(candidate);
+            }
+        });
+
+        socket.on('voiceChatStatus', ({ playerId, enabled }) => {
+            if (voiceIcons.current[playerId]) {
+                voiceIcons.current[playerId].visible = enabled;
+            }
+        });
+
+        socket.on('connect', () => console.log('Socket connected, id=', socket.id));
+        socket.on('currentPlayers', (players) => {
+            console.log('currentPlayers', players);
+            // Получаем cityId текущего игрока из профиля
+            const myProfile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+            const myCityId = myProfile.last_city_id || 1;
+            Object.keys(players).forEach(id => {
+                if (id === socket.id) return;
+                const { x, z, avatarURL, gender, firstName, lastName, cityId } = players[id];
+                if (cityId && cityId !== myCityId) return; // показываем только игроков своего города
+                addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName);
+            });
+            // После получения списка игроков, отправляем newPlayer о себе
+            const profile = myProfile;
+            socket.emit('newPlayer', {
+                x: player?.position?.x || 0,
+                z: player?.position?.z || 0,
+                avatarURL: avatarUrl,
+                firstName: profile.firstName,
+                lastName: profile.lastName,
+                userId: profile.id,
+                cityId: myCityId
+            });
+        });
+
+        socket.on('chatMessage', ({ playerId, name, message, position }) => {
+            console.log('← chatMessage получил:', message);
+            if (!player || !camera || !scene || !obstacles) return;
+
+            const origin = camera.position.clone();
+            const targetPos = new THREE.Vector3(position.x, player.position.y, position.z);
+            const direction = new THREE.Vector3().subVectors(targetPos, origin).normalize();
+            const raycaster = new THREE.Raycaster(origin, direction);
+            const obstacleMeshes = obstacles.map(o => o.mesh);
+            const intersects = raycaster.intersectObjects(obstacleMeshes, true);
+            const distanceToTarget = origin.distanceTo(targetPos);
+
+            if (intersects.length > 0 && intersects[0].distance < distanceToTarget) {
+                console.log(`🔕 ${name} за препятствием — сообщение скрыто`);
+                return;
+            }
+
+            const div = document.getElementById('chatMessages');
+            if (!div) return;
+
+            const p = document.createElement('p');
+            p.textContent = `${name || 'Игрок'}: ${message}`;
+            p.style.color = 'white';
+            p.style.padding = '5px';
+            p.style.margin = '2px 0';
+            p.style.fontSize = '14px';
+            p.style.borderRadius = '10px';
+            div.appendChild(p);
+            div.scrollTop = div.scrollHeight;
+        });
+
+        socket.on('playerMoved', (data) => {
+            const remote = remotePlayers[data.playerId];
+            if (!remote) return;
+
+            const newPos = new THREE.Vector3(data.x, 0, data.z);
+            const dir = new THREE.Vector3().subVectors(newPos, remote.model.position);
+            if (dir.lengthSq() > 1e-4) {
+                const angle = Math.atan2(dir.x, dir.z);
+                const targetQuat = new THREE.Quaternion().setFromEuler(
+                    new THREE.Euler(0, angle, 0)
+                );
+                remote.model.quaternion.slerp(targetQuat, 0.2);
+            }
+
+            remote.targetPosition = newPos.clone();
+
+            if (remote.currentAction !== remote.walkAction) {
+                remote.currentAction.fadeOut(0.2);
+                remote.walkAction.reset().fadeIn(0.2).play();
+                remote.currentAction = remote.walkAction;
+            }
+
+            clearTimeout(remote._idleTimeout);
+            remote._idleTimeout = setTimeout(() => {
+                if (remote.currentAction !== remote.idleAction) {
+                    remote.currentAction.fadeOut(0.2);
+                    remote.idleAction.reset().fadeIn(0.2).play();
+                    remote.currentAction = remote.idleAction;
+                }
+            }, 500);
+
+            // Update voice chat volume based on distance
+            if (voiceConnections.current[data.playerId]) {
+                const dist = player.position.distanceTo(newPos);
+                const maxDist = 50;
+                const volume = Math.max(0, 1 - dist / maxDist);
+                voiceConnections.current[data.playerId].audioElement.volume = volume;
+            }
+        });
+
+        socket.on('newPlayer', (data) => {
+            console.log('newPlayer', data);
+            const { playerId, x, z, avatarURL, gender, firstName, lastName } = data;
+            addOtherPlayer(playerId, x, z, avatarURL, gender, firstName, lastName);
+        });
+
+        socket.on('playerDisconnected', (id) => {
+            if (remotePlayers[id]) {
+                scene.remove(remotePlayers[id].model);
+                delete remotePlayers[id];
+            }
+            if (voiceIcons.current[id]) {
+                delete voiceIcons.current[id];
+            }
+            cleanupVoiceConnection(id);
+        });
+
+        function onMouseWheel(e) {
+            e.preventDefault();
+            const delta = -e.deltaY * 0.001;
+
+            if (e.ctrlKey) {
+                cameraPitchOffset = THREE.MathUtils.clamp(
+                    cameraPitchOffset + delta,
+                    -maxPitch,
+                    maxPitch
+                );
+            } else {
+                zoom = THREE.MathUtils.clamp(zoom * (1 + delta), minZoom, maxZoom);
+                camera.zoom = zoom;
+                camera.updateProjectionMatrix();
+            }
+        }
+
+        async function init() {
+            console.log('[DEBUG] init вызван');
+            scene = new THREE.Scene();
+            sceneRef.current = scene;
+            const aspect = window.innerWidth / window.innerHeight;
+            const d = 200;
+            camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
+            camera.position.set(200, 200, 200);
+
+            camera.zoom = zoom;
+            camera.updateProjectionMatrix();
+
+            camera.lookAt(scene.position);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            mountRef.current.appendChild(renderer.domElement);
+
+            renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+
+            const planeGeometry = new THREE.PlaneGeometry(territorySize, territorySize);
+            const planeMaterial = new THREE.MeshLambertMaterial({ color: 0x00aa00, side: THREE.DoubleSide });
+            groundPlane = new THREE.Mesh(planeGeometry, planeMaterial);
+            groundPlane.rotation.x = -Math.PI / 2;
+            scene.add(groundPlane);
+            groundRef.current = groundPlane;
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 100, 50);
+            scene.add(directionalLight);
+
+            const markerGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+            const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            destinationMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+            destinationMarker.visible = false;
+            scene.add(destinationMarker);
+
+            const loadingManager = new THREE.LoadingManager(() => {
+                console.log("Все текстуры загружены");
+            });
+            const textureLoader = new THREE.TextureLoader(loadingManager);
+            const baseTexture = textureLoader.load('textures/base.png');
+            const customMaterial = new THREE.MeshStandardMaterial({
+                map: baseTexture,
+            });
+
+
+            const npcMixersArray = [];
+            // Добавление персонажей 
+            const npcData = [
+                { id: 'bartender', model: '/models/npc/bartender.glb', position: [30, 0, 15] },
+
+
+                /// начало изменения ///
+                { id: 'bartender', model: '/models/npc/bartender.glb', position: [0, 0, 10] },
+                /// конец изменения ///
+
+
+                { id: 'guard', model: '/models/npc/guard.glb', position: [10, 0, 40] },
+
+
+                /// начало изменения ///
+                { id: 'guard', model: '/models/npc/guard.glb', position: [0, 0, 5] },
+                /// конец изменения ///
+
+
+                { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [20, 0, 10] }
+
+
+/// начало изменения ///
+            { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [0, 0, -5] },
+                /// конец изменения ///
+
+
+                /// начало изменения ///
+                { id: 'BeachCharacter', model: '/models/npc/BeachCharacter.glb', position: [0, 0, 3] },
+                { id: 'Oxranik', model: '/models/npc/Oxranik.glb', position: [0, 0, -3] },
+                { id: 'Computer', model: '/models/npc/Computer.glb', position: [0.1, 0.1, 2.1] }
+                /// конец изменения ///
+            ];
+            for (const npc of npcData) {
+                try {
+                    const gltf = await gltfLoader.loadAsync(npc.model);
+                    const model = gltf.scene;
+                    model.position.set(...npc.position);
+                    model.userData.npcId = npc.id;
+                    model.userData.isNpc = true;
+
+                    // Добавляем метку с именем
+                    const label = createPlayerLabel(npc.id === 'bartender' ? 'Бармен' : 'Стражник');
+                    /// начало изменения ///
+                    let label;
+                    if (npc.id == 'bartender') {
+                        label = createPlayerLabel('Серега Пират');
+                    }
+                    else if (npc.id == 'guard') {
+                        label = createPlayerLabel('Саша Белый');
+                    }
+                    else if (npc.id == 'Adventurer') {
+                        label = createPlayerLabel('Галина');
+                    }
+                    else if (npc.id == 'BeachCharacter') {
+                        label = createPlayerLabel('Костя Ключник');
+                    }
+                    else if (npc.id == 'Oxranik') {
+                        label = createPlayerLabel('Охранник');
+                    }
+
+                    if (label) {
+                        /// конец изменения ///
+                        label.position.set(0, 2.2, 0);
+                        /// начало изменения ///
+                        label.position.set(0, 2.2, 0);
+                        /// конец изменения ///
+
+
+                        model.add(label);
+                        /// начало изменения ///
+                        model.add(label);
+                        /// конец изменения ///
+
+
+                        /// начало изменения ///
+                    }
+
+                    /// конец изменения ///
+                    model.rotateY(Math.PI); // Развернуть персонажа 
+                    scene.add(model);
+                    npcMeshes.push(model); // Правильное добавление в массив
+                    cityMeshesRef.current.push(model);
+
+                    if (npc.id == 'Adventurer') {
+
+
+                        /// начало изменения ///
+                        if (npc.id == 'Computer') {
+                            /// конец изменения ///
+
+
+                            /// начало изменения ///
+                            model.scale.set(0.001, 0.001, 0.001);
+                            /// конец изменения ///
+                            const clock = new THREE.Clock();
+                            let mixers;
+                            const tick = () => {
+                                model.rotation.y += 0.01;
+                                renderer.render(scene, camera);
+                                window.requestAnimationFrame(tick);
+                            }
+
+
+                            /// начало изменения ///
+                        }
+                        /// конец изменения ///
+                        tick();
+                        /// начало изменения ///
+
+                        if (npc.id == 'Oxranik') {
+                            model.scale.set(0.2, 0.2, 0.2);
+                            /// конец изменения ///
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Ошибка загрузки NPC ${npc.id}:`, error);
+                }
+
+            }
+            // Загрузка объектов города из базы данных
+            let loadedModelsCount = 0;
+            let cityObjects = [];
+            let totalModelsToLoad = 0;
+            try {
+                const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+                const cityId = profile.last_city_id || 1; // по умолчанию 1, если нет
+                console.log('[DEBUG] cityId для загрузки объектов:', cityId);
+                const token = localStorage.getItem('token');
+                const res = await fetch(`/api/cities/${cityId}/objects`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                cityObjects = await res.json();
+                console.log('[DEBUG] Список объектов для загрузки (cityObjects):', cityObjects);
+                totalModelsToLoad = cityObjects.length;
+            } catch (e) {
+                console.error('[DEBUG] Ошибка загрузки объектов города:', e);
+                cityObjects = [];
+                totalModelsToLoad = 0;
+            }
+
+            console.log('[DEBUG] cityObjects:', cityObjects);
+            try {
+                cityObjects.forEach(obj => {
+                    console.log('[DEBUG] Загружаю объект:', obj);
+                    gltfLoader.load(
+                        obj.model_url,
+                        (gltf) => {
+                            const model = gltf.scene;
+                            model.userData = {
+                                id: obj.id,                    // уникальный ID объекта
+                                type: obj.name,                // название типа модели
+                                organizationId: obj.organization_id, // ID организации
+                                rent: obj.rent,                // стоимость аренды (если есть)
+                                tax: obj.tax                   // налог (если есть)
+                            };
+
+                            model.scale.set(1, 1, 1);
+                            model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
+                            model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
+                            model.traverse(child => {
+                                if (child.isMesh) {
+                                    child.material = customMaterial.clone();
+                                    child.material.needsUpdate = true;
+                                }
+                            });
+                            scene.add(model);
+                            cityMeshesRef.current.push(model);
+                            model.updateMatrixWorld();
+                            const boundingBox = new THREE.Box3().setFromObject(model);
+                            const isCollidable = obj.collidable !== false && !/road/i.test(obj.name);
+                            if (isCollidable) {
+                                obstacles.push({ mesh: model, box: boundingBox });
+                            }
+
+                            loadedModelsCount++;
+                            console.log(`[DEBUG] Модель ${obj.name} успешно загружена (${loadedModelsCount}/${totalModelsToLoad})`);
+                            if (loadedModelsCount === totalModelsToLoad) {
+                                console.log('[DEBUG] Все модели загружены. Строим сетку...');
+                                buildPathfindingGrid();
+                            }
+                        },
+                        undefined,
+                        (error) => {
+                            console.error(`[DEBUG] Ошибка загрузки модели ${obj.name}:`, error);
+                        }
+                    );
+                });
+            } catch (e) {
+                console.error('[DEBUG] Ошибка в cityObjects.forEach:', e);
+            }
+
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            renderer.domElement.addEventListener('pointerdown', onDocumentMouseDown);
+
+            try {
+                const gltf = await loadPlayerModel(avatarUrl);
+                player = gltf.scene;
+                scene.add(player);
+                playerRef.current = player;
+                player.scale.set(1, 1, 1);
+                player.position.set(0, 0, 0);
+
+                const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+                const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+
+                mountRef.current = myName;
+
+                const nameLabel = createPlayerLabel(myName);
+                nameLabel.position.set(0, 2.2, 0);
+                player.add(nameLabel);
+
+                mixer = new THREE.AnimationMixer(player);
+
+                const isFemale = gender === 'female';
+                const animGender = isFemale ? 'feminine' : 'masculine';
+
+                const idlePath = `/animations/${animGender}/glb/idle/${isFemale ? 'F_Standing_Idle_001.glb' : 'M_Standing_Idle_001.glb'
+                    }`;
+                const walkPath = `/animations/${animGender}/glb/locomotion/${isFemale ? 'F_Walk_002.glb' : 'M_Walk_001.glb'
+                    }`;
+
+                const [idleGltf, walkGltf] = await Promise.all([
+                    animLoader.loadAsync(idlePath),
+                    animLoader.loadAsync(walkPath)
+                ]);
+
+                idleGltf.animations.forEach(stripPositionTracks);
+                walkGltf.animations.forEach(stripPositionTracks);
+
+                console.log('Idle GLB анимации:', idleGltf.animations);
+                console.log('Walk GLB анимации:', walkGltf.animations);
+
+                idleAction = mixer.clipAction(idleGltf.animations[0], player);
+                walkAction = mixer.clipAction(walkGltf.animations[0], player);
+
+                idleAction.play();
+                currentAction = idleAction;
+
+                updateCameraFollow();
+
+                socketRef.current?.emit('newPlayer', {
+                    x: player.position.x,
+                    z: player.position.z,
+                    avatarURL: avatarUrl,
+                    firstName: profile.firstName,
+                    lastName: profile.lastName,
+                    userId: profile.id
+                });
+            } catch (err) {
+                console.error("Ошибка загрузки модели игрока:", err);
+            }
+        }
+
+        function stripPositionTracks(clip) {
+            clip.tracks = clip.tracks.filter(track => !track.name.endsWith('.position'));
+            return clip;
+        }
+
+        function computePath(fromVec3, toVec3) {
+            const startX = Math.floor((fromVec3.x + boundary) / nodeSize);
+            const startZ = Math.floor((fromVec3.z + boundary) / nodeSize);
+            const endX = Math.floor((toVec3.x + boundary) / nodeSize);
+            const endZ = Math.floor((toVec3.z + boundary) / nodeSize);
+
+            const finder = new PF.AStarFinder({
+                allowDiagonal: true,
+                dontCrossCorners: true,
+                diagonalMovement: PF.DiagonalMovement.OnlyWhenNoObstacles
+            });
+            const gridClone = pathfinderGrid.clone();
+
+            if (!gridClone.isWalkableAt(startX, startZ)) {
+                gridClone.setWalkableAt(startX, startZ, true);
+            }
+
+            if (!gridClone.isWalkableAt(endX, endZ)) {
+                gridClone.setWalkableAt(endX, endZ, true);
+            }
+
+            const rawPath = finder.findPath(startX, startZ, endX, endZ, gridClone);
+            if (!rawPath.length) return [];
+
+            const smooth = PF.Util.smoothenPath(gridClone, rawPath);
+            return smooth.map(([x, z]) => new THREE.Vector3(
+                x * nodeSize - boundary + nodeSize / 2,
+                fromVec3.y,
+                z * nodeSize - boundary + nodeSize / 2
+            ));
+        }
+
+        function buildPathfindingGrid() {
+            pathfinderGrid = new PF.Grid(gridSize, gridSize);
+
+            obstacles.forEach(o => {
+                const box = new THREE.Box3().setFromObject(o.mesh);
+
+                let minX = Math.floor((box.min.x + boundary) / nodeSize);
+                let maxX = Math.floor((box.max.x + boundary) / nodeSize);
+                let minZ = Math.floor((box.min.z + boundary) / nodeSize);
+                let maxZ = Math.floor((box.max.z + boundary) / nodeSize);
+
+                minX = Math.max(0, Math.min(gridSize - 1, minX));
+                maxX = Math.max(0, Math.min(gridSize - 1, maxX));
+                minZ = Math.max(0, Math.min(gridSize - 1, minZ));
+                maxZ = Math.max(0, Math.min(gridSize - 1, maxZ));
+
+                for (let x = minX; x <= maxX; x++) {
+                    for (let z = minZ; z <= maxZ; z++) {
+                        pathfinderGrid.setWalkableAt(x, z, false);
+                    }
+                }
+            });
+        }
+
+        // В функции onDocumentMouseDown заменяем существующий код на:
+        async function onDocumentMouseDown(event) {
+            if (!player) return;
+            event.preventDefault();
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            const mouse = new THREE.Vector2(
+                ((event.clientX - rect.left) / rect.width) * 2 - 1,
+                -((event.clientY - rect.top) / rect.height) * 2 + 1
+            );
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            // NPC
+            const npcHit = raycaster.intersectObjects(npcMeshes, true);
+            /// начало изменения ///
+            const npcHit = raycaster.intersectObjects(npcMeshes, true);
+            /// конец изменения ///
+
+
+            if (npcHit.length) {
+                /// начало изменения ///
+                if (npcHit.length) {
+                    /// конец изменения ///
+
+
+                    let root = npcHit[0].object;
+                    /// начало изменения ///
+                    let root = npcHit[0].object;
+                    /// конец изменения ///
+
+
+                    while (root.parent && !root.userData.isNpc) root = root.parent;
+                    /// начало изменения ///
+                    while (root.parent && !root.userData.isNpc) root = root.parent;
+                    /// конец изменения ///
+
+
+                    if (root.userData.npcId) {
+                        /// начало изменения ///
+                        if (root.userData.npcId) {
+                            /// конец изменения ///
+
+
+                            /// начало изменения ///
+                            if (root.userData.npcId === 'Computer') {
+                                setShowMiniGame(true);
+                                setPasswordCorrect(false);
+                                setAudioUrl("/audio/firs.ogg");
+                                setSeregaComment("Ну чё, хакер, разберёшься?");
+                            } else {
+                                /// конец изменения ///
+                                loadDialog(root.userData.npcId);
+                                /// начало изменения ///
+                                loadDialog(root.userData.npcId);
+                                /// конец изменения ///
+
+
+                                /// начало изменения ///
+                            }
+                            /// конец изменения ///
+                            return;
+                            /// начало изменения ///
+
+
+                            /// начало изменения ///
+                        }
+                        /// конец изменения ///
+                    }
+                }
+
+                // Здания/объекты
+                const houseHit = raycaster.intersectObjects(obstacles.map(o => o.mesh), true);
+                if (houseHit.length) {
+                    let obj = houseHit[0].object;
+                    while (obj && !obj.userData.id) obj = obj.parent;
+                    if (obj && obj.userData.id) {
+                        setSelectedHouse(obj.userData.id);   // сразу телепорт в интерьер
+                        return;
+                    }
+                }
+
+                // 3. Проверка игроков
+                const remoteModels = Object.values(remotePlayers).map(r => r.model);
+                const playerIntersects = raycaster.intersectObjects(remoteModels, true);
+                if (playerIntersects.length) {
+                    let mesh = playerIntersects[0].object;
+                    while (mesh && !remoteModels.includes(mesh)) mesh = mesh.parent;
+                    const entry = Object.entries(remotePlayers).find(([, r]) => r.model === mesh);
+                    if (entry) {
+                        const [id, r] = entry;
+                        setSelectedPlayer({ socketId: id, firstName: r.firstName, lastName: r.lastName });
+                        setPlayerStats(null);
+                        return;
+                    }
+                }
+
+                // Сброс выделений
+                setSelectedHouse(null);
+                setOrgMenu(null);
+                setSelectedPlayer(null);
+
+                // 4. Проверка земли
+                const groundIntersects = raycaster.intersectObject(groundPlane);
+                if (groundIntersects.length === 0) {
+                    console.log("Клик не попал по плоскости");
+                    return;
+                }
+
+                destination = groundIntersects[0].point.clone();
+                destination.y = player.position.y;
+
+                const newPath = computePath(player.position, destination);
+                if (newPath.length === 0) {
+                    console.warn("Путь не найден");
+                    return;
+                }
+                currentPath = newPath;
+                pathIndex = 0;
+
+                if (destinationMarker) {
+                    destinationMarker.position.copy(destination);
+                    destinationMarker.visible = true;
+                }
+            }
+
+            function onKeyDown(event) {
+                keys[event.key] = true;
+                destination = null;
+                destinationMarker.visible = false;
+            }
+
+            function onKeyUp(event) {
+                keys[event.key] = false;
+            }
+
+            function createPlayerLabel(text) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+
+                const fontSize = 15;
+                ctx.fillStyle = 'white';
+                ctx.font = `${fontSize}px Arial`;
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+                const texture = new THREE.CanvasTexture(canvas);
+                texture.needsUpdate = true;
+
+                const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(spriteMaterial);
+
+                sprite.scale.set(3, 0.75, 1);
+
+                return sprite;
+            }
+
+            function switchAnimation(newAction) {
+                if (!newAction || !currentAction || newAction === currentAction) return;
+
+                currentAction.fadeOut(0.2);
+                newAction.reset().fadeIn(0.2).play();
+                currentAction = newAction;
+            }
+
+            function canMove(newPosition) {
+                const halfSize = 1;
+                const playerMin = new THREE.Vector2(newPosition.x - halfSize, newPosition.z - halfSize);
+                const playerMax = new THREE.Vector2(newPosition.x + halfSize, newPosition.z + halfSize);
+
+                for (let i = 0; i < obstacles.length; i++) {
+                    obstacles[i].mesh.updateMatrixWorld();
+                    const box = new THREE.Box3().setFromObject(obstacles[i].mesh);
+                    const obstacleMin = new THREE.Vector2(box.min.x, box.min.z);
+                    const obstacleMax = new THREE.Vector2(box.max.x, box.max.z);
+                    if ((playerMin.x <= obstacleMax.x && playerMax.x >= obstacleMin.x) &&
+                        (playerMin.y <= obstacleMax.y && playerMax.y >= obstacleMin.y)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            function updateDestinationMovement(delta) {
+                if (!player || currentPath.length === 0 || pathIndex >= currentPath.length) return;
+
+                const target = currentPath[pathIndex];
+                const direction = new THREE.Vector3().subVectors(target, player.position);
+                direction.y = 0;
+                const distance = direction.length();
+
+                const stepDistance = moveSpeed * delta;
+                if (distance < stepDistance) {
+                    player.position.copy(target);
+                    pathIndex++;
+                    if (pathIndex >= currentPath.length) {
+                        currentPath = [];
+                        destination = null;
+                        if (currentAction !== idleAction) {
+                            currentAction.fadeOut(0.2);
+                            idleAction.reset().fadeIn(0.2).play();
+                            currentAction = idleAction;
+                        }
+                    }
+                    return;
+                }
+
+                direction.normalize();
+                const step = direction.multiplyScalar(stepDistance);
+                const nextPos = player.position.clone().add(step);
+
+                if (canMove(nextPos)) {
+                    player.position.add(step);
+                    const angle = Math.atan2(direction.x, direction.z);
+                    const targetQuat = new THREE.Quaternion()
+                        .setFromEuler(new THREE.Euler(0, angle, 0));
+                    player.quaternion.slerp(targetQuat, Math.min(1, 10 * delta));
+                    socketRef.current?.emit('playerMovement', { x: player.position.x, z: player.position.z });
+
+                    if (currentAction !== walkAction) {
+                        currentAction.fadeOut(0.2);
+                        walkAction.reset().fadeIn(0.2).play();
+                        currentAction = walkAction;
+                    }
+                } else {
+                    console.warn('hit obstacle, пропускаем узел');
+                    if (currentAction !== idleAction) {
+                        console.log('Не удалось найти путь, стою');
+                        currentAction.fadeOut(0.2);
+                        idleAction.reset().fadeIn(0.2).play();
+                        currentAction = idleAction;
+                    }
+                    pathIndex++;
+                    return;
+                }
+            }
+
+            function updateTransparency() {
+                if (!player) return;
+                obstacles.forEach(obstacle => {
+                    obstacle.mesh.traverse(child => {
+                        if (child.isMesh && child.material) {
+                            child.material.transparent = false;
+                            child.material.opacity = 1.0;
+                            child.material.depthWrite = true;
+                            child.material.needsUpdate = true;
+                        }
+                    });
+                });
+                const direction = new THREE.Vector3().subVectors(player.position, camera.position).normalize();
+                const raycaster = new THREE.Raycaster(camera.position, direction);
+                const camToPlayerDist = camera.position.distanceTo(player.position);
+                const intersects = raycaster.intersectObjects(obstacles.map(ob => ob.mesh), true);
+                intersects.forEach(hit => {
+                    if (hit.object === player) return;
+                    if (hit.distance < camToPlayerDist) {
+                        if (hit.object.parent === scene) {
+                            if (hit.object.isMesh && hit.object.material) {
+                                hit.object.material.transparent = true;
+                                hit.object.material.opacity = 0.3;
+                                hit.object.material.depthWrite = false;
+                                hit.object.material.needsUpdate = true;
+                            }
+                        } else {
+                            hit.object.parent.traverse(child => {
+                                if (child.isMesh && child.material) {
+                                    child.material.transparent = true;
+                                    child.material.opacity = 0.3;
+                                    child.material.depthWrite = false;
+                                    child.material.needsUpdate = true;
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            function updateCameraFollow() {
+                if (!player) return;
+
+                const target = player.position.clone();
+
+                const polar = basePolar + cameraPitchOffset;
+
+                const planar = radius * Math.cos(polar);
+                const yOff = radius * Math.sin(polar);
+
+                const xOff = planar * Math.cos(baseAzimuth);
+                const zOff = planar * Math.sin(baseAzimuth);
+
+                camera.position.set(
+                    target.x + xOff,
+                    target.y + yOff,
+                    target.z + zOff
+                );
+
+                camera.lookAt(target);
+            }
+
+            function animate() {
+                requestAnimationFrame(animate);
+                const delta = clock.getDelta();
+                updateDestinationMovement(delta);
+                if (mixer) mixer.update(delta);
+                updateTransparency();
+                updateCameraFollow();
+                for (let id in remotePlayers) {
+                    const r = remotePlayers[id];
+                    if (r.targetPosition) {
+                        r.model.position.lerp(r.targetPosition, 0.1);
+                    }
+                    r.mixer.update(delta);
+                }
+                renderer.render(scene, camera);
+            }
+
+            (async () => {
+                await init();
+                animate();
+            })();
+
+            function onWindowResize() {
+                const aspect = window.innerWidth / window.innerHeight;
+                camera.left = -200 * aspect;
+                camera.right = 200 * aspect;
+                camera.top = 200;
+                camera.bottom = -200;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+            window.addEventListener('resize', onWindowResize, false);
+
+            return () => {
+                window.removeEventListener('keydown', onKeyDown);
+                window.removeEventListener('keyup', onKeyUp);
+                renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
+                renderer.domElement.removeEventListener('wheel', onMouseWheel);
+                window.removeEventListener('resize', onWindowResize);
+                if (renderer && renderer.domElement && renderer.domElement.parentNode) {
+                    renderer.domElement.parentNode.removeChild(renderer.domElement);
+                }
+                if (localStream.current) {
+                    localStream.current.getTracks().forEach(track => track.stop());
+                }
+                Object.keys(voiceConnections.current).forEach(peerId => {
+                    cleanupVoiceConnection(peerId);
+                });
+                if (interiorGroupRef.current) {
+                    scene.remove(interiorGroupRef.current);
+                    interiorGroupRef.current = null;
+                }
+            };
+        }, []);
+
+    const [showWorldMap, setShowWorldMap] = useState(false);
+    const [cities, setCities] = useState([]);
+
+    // Получить список городов при открытии карты мира
+    async function openWorldMap() {
+        setShowWorldMap(true);
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/cities', { headers: { Authorization: `Bearer ${token}` } });
+        console.log('Ответ /api/cities:', res);
+        if (res.ok) {
+            const data = await res.json();
+            console.log('Данные городов:', data);
+            setCities(data);
+        } else {
+            console.warn('Ошибка загрузки городов:', res.status, res.statusText);
+        }
     }
 
-    (async () => {
-      await init();
-      animate();
-    })();
-
-    function onWindowResize() {
-      const aspect = window.innerWidth / window.innerHeight;
-      camera.left = -200 * aspect;
-      camera.right = 200 * aspect;
-      camera.top = 200;
-      camera.bottom = -200;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+    function closeWorldMap() {
+        setShowWorldMap(false);
     }
-    window.addEventListener('resize', onWindowResize, false);
 
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
-      renderer.domElement.removeEventListener('wheel', onMouseWheel);
-      window.removeEventListener('resize', onWindowResize);
-      if (renderer && renderer.domElement && renderer.domElement.parentNode) {
-        renderer.domElement.parentNode.removeChild(renderer.domElement);
-      }
-      if (localStream.current) {
-        localStream.current.getTracks().forEach(track => track.stop());
-      }
-      Object.keys(voiceConnections.current).forEach(peerId => {
-        cleanupVoiceConnection(peerId);
-      });
-      if (interiorGroupRef.current) {
-        scene.remove(interiorGroupRef.current);
-        interiorGroupRef.current = null;
-      }
-    };
-  }, []);
-
-  const [showWorldMap, setShowWorldMap] = useState(false);
-  const [cities, setCities] = useState([]);
-
-  // Получить список городов при открытии карты мира
-  async function openWorldMap() {
-    setShowWorldMap(true);
-    const token = localStorage.getItem('token');
-    const res = await fetch('/api/cities', { headers: { Authorization: `Bearer ${token}` } });
-    console.log('Ответ /api/cities:', res);
-    if (res.ok) {
-      const data = await res.json();
-      console.log('Данные городов:', data);
-      setCities(data);
-    } else {
-      console.warn('Ошибка загрузки городов:', res.status, res.statusText);
+    async function handleCitySelect(cityId) {
+        setShowWorldMap(false);
+        // Отправляем событие на сервер
+        socketRef.current?.emit('cityChange', { cityId });
+        // Обновляем профиль в sessionStorage
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+            const profile = await res.json();
+            profile.last_city_id = cityId; // явно обновляем поле
+            sessionStorage.setItem('user_profile', JSON.stringify(profile));
+        }
+        window.location.reload();
     }
-  }
 
-  function closeWorldMap() {
-    setShowWorldMap(false);
-  }
+    return (
+        <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+            <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
+                Сытость: {satiety}
+            </div>
+            {/* Кнопка карты мира */}
+            <button
+                style={{
+                    position: 'absolute',
+                    top: 20,
+                    right: 20,
+                    zIndex: 1000,
+                    padding: '10px 18px',
+                    background: '#0047ab',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                }}
+                onClick={openWorldMap}
+            >
+                Карта мира
+            </button>
+/// начало изменения ///
 
-  async function handleCitySelect(cityId) {
-    setShowWorldMap(false);
-    // Отправляем событие на сервер
-    socketRef.current?.emit('cityChange', { cityId });
-    // Обновляем профиль в sessionStorage
-    const token = localStorage.getItem('token');
-    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const profile = await res.json();
-      profile.last_city_id = cityId; // явно обновляем поле
-      sessionStorage.setItem('user_profile', JSON.stringify(profile));
-    }
-    window.location.reload();
-  }
+            /// конец изменения ///
 
-  return (
-    <div ref={mountRef} style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
-        Сытость: {satiety}
-      </div>
-      {/* Кнопка карты мира */}
-      <button
-        style={{
-          position: 'absolute',
-          top: 20,
-          right: 20,
-          zIndex: 1000,
-          padding: '10px 18px',
-          background: '#0047ab',
-          color: 'white',
-          border: 'none',
-          borderRadius: '8px',
-          fontSize: '18px',
-          cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-        }}
-        onClick={openWorldMap}
-      >
-        Карта мира
-      </button>
-
-      {isInInterior && (
-        <button
-          style={{
-            position: 'absolute',
-            top: 60,
-            right: 20,
-            zIndex: 1000,
-            padding: '10px 18px',
-            background: '#0047ab',
-            color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '18px',
-            cursor: 'pointer',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-          }}
-          onClick={exitInterior}
-        >
-          Выйти
-        </button>
-      )}
-
-      {selectedHouse && !isInInterior && (
-        <div style={{
-          position: 'absolute',
-          bottom: 20,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(0,0,0,0.7)',
-          color: '#fff',
-          padding: '10px 20px',
-          borderRadius: '8px',
-          zIndex: 1000
-        }}>
-          <button
-            onClick={() => enterInterior(selectedHouse)}
-            style={{
-              fontSize: '18px',
-              padding: '8px 16px',
-              background: '#00aaff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer'
-            }}
-          >
-            Войти в здание
-          </button>
-          <button
-            onClick={() => setSelectedHouse(null)}
-            style={{
-              marginLeft: '10px',
-              fontSize: '18px',
-              background: '#aaa',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer'
-            }}
-          >
-            Отмена
-          </button>
-        </div>
-      )}
-
-
-      {/* Модальное окно выбора города */}
-      {showWorldMap && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          background: 'rgba(0,0,0,0.5)',
-          zIndex: 2000,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
-          <div style={{
-            background: 'white',
-            borderRadius: '16px',
-            padding: '32px',
-            minWidth: '350px',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.25)'
-          }}>
-            <h2 style={{ marginTop: 0 }}>Выберите город</h2>
-            <ul style={{ listStyle: 'none', padding: 0 }}>
-              {cities.map(city => (
-                <li key={city.id} style={{ margin: '12px 0' }}>
-                  <button
+            {isInInterior && (
+                <button
                     style={{
-                      width: '100%',
-                      padding: '12px',
-                      fontSize: '16px',
-                      borderRadius: '8px',
-                      border: '1px solid #0047ab',
-                      background: '#f1f6ff',
-                      color: '#0047ab',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s'
+                        position: 'absolute',
+                        top: 60,
+                        right: 20,
+                        zIndex: 1000,
+                        padding: '10px 18px',
+                        background: '#0047ab',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '18px',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
                     }}
-                    onClick={() => handleCitySelect(city.id)}
-                  >
-                    {city.name} ({city.country_name})
-                  </button>
+                    onClick={exitInterior}
+                >
+                    Выйти
+                </button>
+            )}
+
+            {selectedHouse && !isInInterior && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: 20,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(0,0,0,0.7)',
+                    color: '#fff',
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    zIndex: 1000
+                }}>
+                    <button
+                        onClick={() => enterInterior(selectedHouse)}
+                        style={{
+                            fontSize: '18px',
+                            padding: '8px 16px',
+                            background: '#00aaff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Войти в здание
+                    </button>
+                    <button
+                        onClick={() => setSelectedHouse(null)}
+                        style={{
+                            marginLeft: '10px',
+                            fontSize: '18px',
+                            background: '#aaa',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Отмена
+                    </button>
+                </div>
+            )}
+
+
+/// начало изменения ///
+            {cleanupGameButton}
+/// конец изменения ///
+            {/* Модальное окно выбора города */}
+            {showWorldMap && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    width: '100vw',
+                    height: '100vh',
+                    background: 'rgba(0,0,0,0.5)',
+                    zIndex: 2000,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                }}>
+                    <div style={{
+                        background: 'white',
+                        borderRadius: '16px',
+                        padding: '32px',
+                        minWidth: '350px',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.25)'
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Выберите город</h2>
+                        <ul style={{ listStyle: 'none', padding: 0 }}>
+                            {cities.map(city => (
+                                <li key={city.id} style={{ margin: '12px 0' }}>
+                                    <button
+                                        style={{
+                                            width: '100%',
+                                            padding: '12px',
+                                            fontSize: '16px',
+                                            borderRadius: '8px',
+                                            border: '1px solid #0047ab',
+                                            background: '#f1f6ff',
+                                            color: '#0047ab',
+                                            cursor: 'pointer',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onClick={() => handleCitySelect(city.id)}
+                                    >
+                                        {city.name} ({city.country_name})
+                                    </button>
+/// начало изменения ///
+                                </button>
+/// конец изменения ///
+
+
                 </li>
               ))}
-            </ul>
-            <button onClick={closeWorldMap} style={{ marginTop: 16, background: '#eee', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>Закрыть</button>
-          </div>
+                    </ul>
+                    <button onClick={closeWorldMap} style={{ marginTop: 16, background: '#eee', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>Закрыть</button>
+                </div>
         </div>
-      )}
-
-      {selectedHouse && (
-        <div style={{
-          position: 'absolute',
-          top: 20, right: 20,
-          background: 'rgba(0,0,0,0.8)',
-          color: '#fff', padding: 16,
-          borderRadius: 8, minWidth: 220
-        }}>
-          <h3 style={{ margin: 0, marginBottom: 8 }}>🏠 {selectedHouse.type}</h3>
-          <p style={{ margin: '4px 0' }}>
-            <b>ID:</b> {selectedHouse.id}
-          </p>
-          <p style={{ margin: '4px 0' }}>
-            <b>Стоимость аренды:</b> {selectedHouse.rent}
-          </p>
-          <p style={{ margin: '4px 0' }}>
-            <b>Налог:</b> {selectedHouse.tax}
-          </p>
-          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <button onClick={() => enterHouse(selectedHouse)}
-                    style={btnStyle}>Войти</button>
-            <button onClick={() => viewStats(selectedHouse)}
-                    style={btnStyle}>Статистика</button>
-          </div>
-        </div>
+    )
+}
+/// начало изменения ///
           )}
+/// конец изменения ///
+
+/// начало изменения ///
+{
+    selectedTransaction && (
+        <div style={{
+            padding: '20px',
+            background: '#1a1a1a',
+            borderTop: '1px solid #333'
+        }}>
+            <h3 style={{ marginTop: 0 }}>Детали транзакции #{selectedTransaction.id}</h3>
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '10px',
+                marginBottom: '15px'
+            }}>
+                <div><strong>Дата:</strong> {selectedTransaction.date} {selectedTransaction.time}</div>
+                <div><strong>Сумма:</strong> {selectedTransaction.amount}</div>
+                <div><strong>Назначение:</strong> {selectedTransaction.purpose || '—'}</div>
+                <div><strong>IP-адрес:</strong> {selectedTransaction.ip || 'скрыто'}</div>
+                <div><strong>Город:</strong> {selectedTransaction.city}</div>
+                <div><strong>Устройство:</strong> {selectedTransaction.device || 'скрыто'}</div>
+                <div><strong>Получатель:</strong> {selectedTransaction.recipient}</div>
+            </div>
+/// конец изменения ///
+
+            /// начало изменения ///
+            {/* Подсказки для подозрительных транзакций */}
+            {selectedTransaction._isSuspicious && markedTransactions.includes(selectedTransaction.id) && (
+                <div style={{
+                    padding: '10px',
+                    background: '#2a1a1a',
+                    borderRadius: '5px',
+                    marginBottom: '15px'
+                }}>
+                    <h4 style={{ marginTop: 0 }}>🔍 Обнаруженная аномалия:</h4>
+                    {selectedTransaction._anomalyType === 0 && (
+                        <p>Географический прыжок: транзакция из {selectedTransaction.city} всего через час после предыдущей из другого города.</p>
+                    )}
+                    {selectedTransaction._anomalyType === 1 && (
+                        <p>Подозрительное устройство ({selectedTransaction._realDevice}) и отсутствие назначения платежа.</p>
+                    )}
+                    {selectedTransaction._anomalyType === 2 && (
+                        <p>Многократные переводы одному получателю ({selectedTransaction.recipient}) с большими суммами.</p>
+                    )}
+                </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                    style={{
+                        background: '#3498db',
+                        color: 'white',
+                        border: 'none',
+                        padding: '8px 15px',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                    }}
+                    onClick={() => handleDecryptField(selectedTransaction.id, 'ip')}
+                    disabled={decryptAttempts <= 0 || selectedTransaction.ip}
+                >
+                    🕵️ Расшифровать IP ({decryptAttempts} осталось)
+                </button>
+                <button
+                    style={{
+                        background: '#3498db',
+                        color: 'white',
+                        border: 'none',
+                        padding: '8px 15px',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                    }}
+                    onClick={() => handleDecryptField(selectedTransaction.id, 'device')}
+                    disabled={decryptAttempts <= 0 || selectedTransaction.device}
+                >
+                    🕵️ Расшифровать устройство ({decryptAttempts} осталось)
+                </button>
+            </div>
+        </div>
+    )
+}
+
+{
+    gameResult === 'complete' && (
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 3000
+        }}>
+            <div style={{
+                background: '#1a2a1a',
+                padding: '40px',
+                borderRadius: '10px',
+                maxWidth: '600px',
+                textAlign: 'center'
+            }}>
+                <h2 style={{ color: '#4CAF50' }}>Этап пройден!</h2>
+                <p style={{ fontSize: '18px', margin: '20px 0' }}>
+                    Поздравляем! Вы успешно завершили все уровни игры "Чистка или компромат".
+                </p>
+                <p style={{ marginBottom: '30px' }}>
+                    Ваши навыки анализа транзакций на высоте!
+                </p>
+                <button
+                    style={{
+                        background: '#2196F3',
+                        color: 'white',
+                        border: 'none',
+                        padding: '12px 24px',
+                        borderRadius: '5px',
+                        fontSize: '16px',
+                        cursor: 'pointer'
+                    }}
+                    onClick={() => {
+                        setGameResult(null);
+                        setShowCleanupGame(false);
+                        setCurrentLevel(1); // Сброс уровня
+                    }}
+                >
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    )
+}
+
+{
+    showCleanupGame && !gameCompleted && (
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.9)',
+            zIndex: 2000,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#0f0',
+            fontFamily: 'monospace',
+            padding: '20px'
+        }}>
+            <div style={{
+                width: '90%',
+                maxWidth: '1200px',
+                background: '#111',
+                border: '1px solid #333',
+                borderRadius: '5px',
+                overflow: 'hidden'
+            }}>
+                {/* Заголовок */}
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 20px',
+                    background: '#222',
+                    borderBottom: '1px solid #333'
+                }}>
+
+                    <h2 style={{ margin: 0 }}>Чистка или компромат (Уровень {currentLevel})</h2>
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                        <span>Время: {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}</span>
+                        <span>Расшифровки: {decryptAttempts}</span>
+                        <span>Найдено: {suspiciousFound}/3</span>
+                    </div>
+                </div>
+
+                {/* Комментарии Серёги */}
+                {seregaComments.length > 0 && (
+                    <div style={{
+                        padding: '10px',
+                        background: '#1a1a1a',
+                        borderBottom: '1px solid #333',
+                        fontStyle: 'italic'
+                    }}>
+                        {seregaComments[seregaComments.length - 1].text}
+                    </div>
+                )}
+
+                {/* Таблица транзакций */}
+                <div style={{
+                    maxHeight: '60vh',
+                    overflowY: 'auto'
+                }}>
+                    <table style={{
+                        width: '100%',
+                        borderCollapse: 'collapse'
+                    }}>
+                        <thead>
+                            <tr style={{ background: '#1a1a1a' }}>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Дата</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Сумма</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Назначение</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>IP-адрес</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Город</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Устройство</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Получатель</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {cleanupGameData?.map((tx) => (
+                                <tr
+                                    key={tx.id}
+                                    style={{
+                                        background: markedTransactions.includes(tx.id)
+                                            ? (tx._isSuspicious ? '#2a1a1a' : '#3a1a1a')
+                                            : '#1a1a1a',
+                                        borderBottom: '1px solid #333',
+                                        cursor: 'pointer'
+                                    }}
+                                    onClick={() => setSelectedTransaction(tx)}
+                                >
+                                    <td style={{ padding: '10px' }}>{tx.date}</td>
+                                    <td style={{ padding: '10px' }}>{tx.amount}</td>
+                                    <td style={{ padding: '10px' }}>{tx.purpose || '—'}</td>
+                                    <td style={{ padding: '10px' }}>{tx.ip || 'скрыто'}</td>
+                                    <td style={{ padding: '10px' }}>{tx.city}</td>
+                                    <td style={{ padding: '10px' }}>{tx.device || 'скрыто'}</td>
+                                    <td style={{ padding: '10px' }}>{tx.recipient}</td>
+                                    <td style={{ padding: '10px', display: 'flex', gap: '5px' }}>
+                                        <button
+                                            style={{
+                                                background: markedTransactions.includes(tx.id)
+                                                    ? (tx._isSuspicious ? '#27ae60' : '#e74c3c')
+                                                    : '#333',
+                                                color: 'white',
+                                                border: 'none',
+                                                padding: '5px 10px',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer'
+                                            }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleMarkTransaction(tx.id);
+                                            }}
+                                        >
+                                            {markedTransactions.includes(tx.id) ? '✓ Помечено' : 'Пометить'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Детали транзакции */}
+                {selectedTransaction && (
+                    <div style={{
+                        padding: '20px',
+                        background: '#1a1a1a',
+                        borderTop: '1px solid #333'
+                    }}>
+                        <h3 style={{ marginTop: 0 }}>Детали транзакции #{selectedTransaction.id}</h3>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '10px',
+                            marginBottom: '15px'
+                        }}>
+                            <div><strong>Дата:</strong> {selectedTransaction.date} {selectedTransaction.time}</div>
+                            <div><strong>Сумма:</strong> {selectedTransaction.amount}</div>
+                            <div><strong>Назначение:</strong> {selectedTransaction.purpose || '—'}</div>
+                            <div><strong>IP-адрес:</strong> {selectedTransaction.ip || 'скрыто'}</div>
+                            <div><strong>Город:</strong> {selectedTransaction.city}</div>
+                            <div><strong>Устройство:</strong> {selectedTransaction.device || 'скрыто'}</div>
+                            <div><strong>Получатель:</strong> {selectedTransaction.recipient}</div>
+                        </div>
+
+                        {/* Подсказки для подозрительных транзакций */}
+                        {selectedTransaction._isSuspicious && markedTransactions.includes(selectedTransaction.id) && (
+                            <div style={{
+                                padding: '10px',
+                                background: '#2a1a1a',
+                                borderRadius: '5px',
+                                marginBottom: '15px'
+                            }}>
+                                <h4 style={{ marginTop: 0 }}>🔍 Обнаруженная аномалия:</h4>
+                                {selectedTransaction._anomalyType === 0 && (
+                                    <p>Географический прыжок: транзакция из {selectedTransaction.city} всего через час после предыдущей из другого города.</p>
+                                )}
+                                {selectedTransaction._anomalyType === 1 && (
+                                    <p>Подозрительное устройство ({selectedTransaction._realDevice}) и отсутствие назначения платежа.</p>
+                                )}
+                                {selectedTransaction._anomalyType === 2 && (
+                                    <p>Многократные переводы одному получателю ({selectedTransaction.recipient}) с большими суммами.</p>
+                                )}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button
+                                style={{
+                                    background: '#3498db',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '8px 15px',
+                                    borderRadius: '3px',
+                                    cursor: 'pointer'
+                                }}
+                                onClick={() => handleDecryptField(selectedTransaction.id, 'ip')}
+                                disabled={decryptAttempts <= 0 || selectedTransaction.ip}
+                            >
+                                🕵️ Расшифровать IP ({decryptAttempts} осталось)
+                            </button>
+                            <button
+                                style={{
+                                    background: '#3498db',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '8px 15px',
+                                    borderRadius: '3px',
+                                    cursor: 'pointer'
+                                }}
+                                onClick={() => handleDecryptField(selectedTransaction.id, 'device')}
+                                disabled={decryptAttempts <= 0 || selectedTransaction.device}
+                            >
+                                🕵️ Расшифровать устройство ({decryptAttempts} осталось)
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Результат игры */}
+                {gameResult === 'success' && (
+                    <div style={{
+                        margin: '20px 0',
+                        textAlign: 'center',
+                        fontSize: '18px'
+                    }}>
+                        <p>Текущий уровень: {currentLevel}</p>
+                        <div style={{
+                            width: '100%',
+                            height: '20px',
+                            backgroundColor: '#333',
+                            borderRadius: '10px',
+                            margin: '10px 0'
+                        }}>
+                            <div style={{
+                                width: `${(currentLevel % 5) * 20}%`,
+                                height: '100%',
+                                backgroundColor: '#4CAF50',
+                                borderRadius: '10px'
+                            }}></div>
+                        </div>
+                        <p>Следующий уровень загружается...</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+/// конец изменения ///
+{
+    selectedHouse && (
+        <div style={{
+            position: 'absolute',
+            top: 20, right: 20,
+            background: 'rgba(0,0,0,0.8)',
+            color: '#fff', padding: 16,
+            borderRadius: 8, minWidth: 220
+        }}>
+            <h3 style={{ margin: 0, marginBottom: 8 }}>🏠 {selectedHouse.type}</h3>
+            <p style={{ margin: '4px 0' }}>
+                <b>ID:</b> {selectedHouse.id}
+            </p>
+            <p style={{ margin: '4px 0' }}>
+                <b>Стоимость аренды:</b> {selectedHouse.rent}
+            </p>
+            <p style={{ margin: '4px 0' }}>
+                <b>Налог:</b> {selectedHouse.tax}
+            </p>
+            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <button onClick={() => enterHouse(selectedHouse)}
+                    style={btnStyle}>Войти</button>
+                <button onClick={() => viewStats(selectedHouse)}
+                    style={btnStyle}>Статистика</button>
+            </div>
+        </div>
+    )
+}
+/// начало изменения ///
+          <DialogWindow
+              currentDialog={currentDialog}
+              dialogIndex={dialogIndex}
+              showDialog={showDialog}
+              formData={formData}
+              currentForm={currentForm}
+              handleAnswerSelect={handleAnswerSelect}
+/// конец изменения ///
           {showDialog && currentDialog && (
               <div style={{
                   position: 'fixed',
@@ -1945,6 +2862,18 @@ function movePlayerToInterior(interiorId) {
 
                   {currentForm ? (
                       <form onSubmit={handleFormSubmit}>
+              ^^^^^^^^^^   ---                         -
+
+/// начало изменения ///
+              handleFormSubmit={handleFormSubmit}
+/// конец изменения ///
+              ^^^^^^^
+
+/// начало изменения ///
+              handleFormChange={handleFormChange}
+              setShowDialog={setShowDialog}
+          />   
+/// конец изменения ///
                           <h4 style={{ marginTop: 0 }}>{currentForm.title}</h4>
                           {currentForm.fields.map((field, idx) => (
                               <div key={idx} style={{ marginBottom: '15px' }}>
@@ -2103,7 +3032,250 @@ function movePlayerToInterior(interiorId) {
           )}
         </div>
       )}
+/// начало изменения ///
+          {showMiniGame && (
+              <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100vw',
+                  height: '100vh',
+                  background: 'rgba(0,0,0,0.95)',
+                  zIndex: 2000,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontFamily: '"Courier New", monospace',
+                  color: '#0f0',
+                  backdropFilter: 'blur(5px)'
+              }}>
+                  {/* Terminal-like header */}
+                  <div style={{
+                      width: '90%',
+                      maxWidth: '800px',
+                      background: '#111',
+                      borderTopLeftRadius: '10px',
+                      borderTopRightRadius: '10px',
+                      padding: '10px 20px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderBottom: '1px solid #333'
+                  }}>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <div style={{
+                              width: '12px',
+                              height: '12px',
+                              borderRadius: '50%',
+                              background: '#ff5f56',
+                              marginRight: '8px'
+                          }}></div>
+                          <div style={{
+                              width: '12px',
+                              height: '12px',
+                              borderRadius: '50%',
+                              background: '#ffbd2e',
+                              marginRight: '8px'
+                          }}></div>
+                          <div style={{
+                              width: '12px',
+                              height: '12px',
+                              borderRadius: '50%',
+                              background: '#27c93f'
+                          }}></div>
+                          <span style={{ marginLeft: '15px', color: '#ccc' }}>terminal — hack_system</span>
+                      </div>
+                      <button
+                          onClick={() => {
+                              setShowMiniGame(false);
+                              setPasswordCorrect(false);
+                              setAudioUrl("/audio/firs.ogg");
+                          }}
+                          style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#ccc',
+                              fontSize: '18px',
+                              cursor: 'pointer'
+                          }}
+                      >
+                          ✕
+                      </button>
+                  </div>
+/// конец изменения ///
 
+/// начало изменения ///
+                  {/* Main terminal content */}
+                  <div style={{
+                      width: '90%',
+                      maxWidth: '800px',
+                      height: '60vh',
+                      background: 'rgba(0, 20, 0, 0.2)',
+                      padding: '20px',
+                      overflowY: 'auto',
+                      border: '1px solid #0a0',
+                      boxShadow: '0 0 20px rgba(0, 255, 0, 0.1)',
+                      position: 'relative'
+                  }}>
+                      {/* Terminal text */}
+                      <div style={{ marginBottom: '20px' }}>
+                          <p style={{ color: '#0f0', margin: '5px 0' }}>
+                              <span style={{ color: '#0af' }}>user@hack-system:</span>~
+                              <span style={{ color: '#0f0' }}>$</span> sudo access mainframe
+                          </p>
+                          <p style={{ color: '#f50', margin: '5px 0' }}>
+                              [sudo] password for user: ********
+                          </p>
+                          <p style={{ color: '#0f0', margin: '5px 0' }}>
+                              <span style={{ color: '#0af' }}>user@hack-system:</span>~
+                              <span style={{ color: '#0f0' }}>$</span> Trying to bypass security...
+                          </p>
+                      </div>
+
+                      {/* Waveform visualization */}
+                      <div style={{
+                          width: '100%',
+                          height: '100px',
+                          background: 'rgba(0, 30, 0, 0.3)',
+                          margin: '20px 0',
+                          border: '1px solid #0a0',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                      }}>
+                          <WaveformPlayer
+                              url={audioUrl}
+                              playing={isPlaying}
+                              width={600}
+                              height={80}
+                              waveColor="#0f0"
+                              progressColor="#0a0"
+                              cursorColor="#0f0"
+                          />
+                      </div>
+
+                      {/* Serega's comment */}
+                      <div style={{
+                          padding: '10px',
+                          background: 'rgba(0, 40, 0, 0.3)',
+                          borderLeft: '3px solid #0f0',
+                          margin: '20px 0'
+                      }}>
+                          <p style={{ color: '#ff0', margin: '0', fontStyle: 'italic' }}>
+                              <span style={{ color: '#0af' }}>SEREGA_PIRAT:</span> {seregaComment || "Ну чё, хакер, разберёшься?"}
+                          </p>
+                      </div>
+
+                      {/* Password options */}
+                      <div style={{ marginTop: '30px' }}>
+                          <p style={{ color: '#0f0', marginBottom: '10px' }}>
+                              Available password fragments:
+                          </p>
+                          <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(2, 1fr)',
+                              gap: '10px',
+                              marginBottom: '20px'
+                          }}>
+                              {passwordCorrect ? (
+                                  programmingLanguages.map((lang, index) => (
+                                      <div key={index} style={{
+                                          padding: '10px',
+                                          background: 'rgba(0, 50, 0, 0.3)',
+                                          border: '1px solid #0a0',
+                                          borderRadius: '5px',
+                                          textAlign: 'center',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.2s',
+                                          ':hover': {
+                                              background: 'rgba(0, 80, 0, 0.5)',
+                                              boxShadow: '0 0 10px rgba(0, 255, 0, 0.3)'
+                                          }
+                                      }}>
+                                          {lang}
+                                      </div>
+                                  ))
+                              ) : (
+                                  ['first', 'second', 'third', 'fourth'].map((item, index) => (
+                                      <div key={index} style={{
+                                          padding: '10px',
+                                          background: 'rgba(0, 50, 0, 0.3)',
+                                          border: '1px solid #0a0',
+                                          borderRadius: '5px',
+                                          textAlign: 'center'
+                                      }}>
+                                          {item}
+                                      </div>
+                                  ))
+                              )}
+                          </div>
+
+                          {/* Password input */}
+                          <div style={{ position: 'relative' }}>
+                              <span style={{ color: '#0f0' }}>Enter password:</span>
+                              <input
+                                  type="text"
+                                  placeholder="Type here and press Enter..."
+                                  onKeyDown={handlePasswordInput}
+                                  style={{
+                                      width: '100%',
+                                      padding: '10px',
+                                      marginTop: '5px',
+                                      background: 'rgba(0, 0, 0, 0.5)',
+                                      border: '1px solid #0a0',
+                                      color: '#0f0',
+                                      fontFamily: '"Courier New", monospace',
+                                      fontSize: '16px',
+                                      outline: 'none'
+                                  }}
+                              />
+                              <div style={{
+                                  position: 'absolute',
+                                  bottom: '-20px',
+                                  right: '0',
+                                  color: '#888',
+                                  fontSize: '12px'
+                              }}>
+                                  Hint: Try common passwords first
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Controls */}
+                  <div style={{
+                      width: '90%',
+                      maxWidth: '800px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      padding: '15px 20px',
+                      background: '#111',
+                      borderBottomLeftRadius: '10px',
+                      borderBottomRightRadius: '10px',
+                      borderTop: '1px solid #333'
+                  }}>
+                      <button
+                          onClick={() => setIsPlaying(!isPlaying)}
+                          style={{
+                              padding: '8px 15px',
+                              background: isPlaying ? '#f50' : '#0a0',
+                              border: 'none',
+                              borderRadius: '5px',
+                              color: '#fff',
+                              cursor: 'pointer',
+                              fontFamily: '"Courier New", monospace'
+                          }}
+                      >
+                          {isPlaying ? 'Pause Sound' : 'Play Sound'}
+                      </button>
+                      <div style={{ color: '#888' }}>
+                          Status: {passwordCorrect ? 'ACCESS GRANTED' : 'ACCESS DENIED'}
+                      </div>
+                  </div>
+              </div>
+          )}
+/// конец изменения ///
       {orgMenu && (
         <div style={{
           position: 'absolute',
@@ -2242,350 +3414,405 @@ function movePlayerToInterior(interiorId) {
                   />
               </div>
           </DoubleTapWrapper>
-          {/*Телефон*/}
-          <DoubleTapWrapper
-              onDoubleTap={() => setIsPhoneVisible(false)}
-              onTap={() => { if (!isPhoneVisible) setIsPhoneVisible(true); }}
-          >
-              <div
-                  style={{
-                      position: "absolute",
-                      bottom: "20px",
-                      right: "20px",
-                      background: "linear-gradient(#e66465, #9198e5)",
-                      width: "200px",
-                      aspectRatio: "10 / 19.5",
-                      borderRadius: "1.5em",
-                      border: "0.5em solid black",
-                      overflow: "hidden",
-                      zIndex: 100,
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      opacity: isPhoneVisible ? 1 : 0,
-                      transition: 'opacity 0.3s ease',
-                      // Разрешаем клики даже когда невидим
-                      pointerEvents: 'auto',
-                      // Прозрачная область для кликов когда скрыт
-                      cursor: isPhoneVisible ? 'default' : 'pointer'
-                  }}
-                  onDoubleClick={() => setIsPhoneVisible(false)}
-                  onClick={() => {
-                      if (!isPhoneVisible) {
-                          setIsPhoneVisible(true);
-                      }
-                  }
-                  }
-              >
-                  {/* Содержимое телефона */}
-                  <div style={{ flex: 1, position: "relative", pointerEvents: isPhoneVisible ? 'auto' : 'none' }}>
-                      {!appsHidden ? (
-                          // Иконки приложений
-                          <div className="app-grid" style={{
-                              display: "grid",
-                              gridTemplateColumns: "repeat(3, 1fr)",
-                              gap: "0.5em",
-                              padding: "0.5em"
-                          }}>
-                              {[
-                                  { src: "https://cdn-icons-png.flaticon.com/512/174/174855.png", alt: "YouTube", app: "YouTube" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail", app: "Gmail" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера", app: "Camera" },
-                                  { src: "https://cdn.iconscout.com/icon/free/png-512/free-telegram-logo-icon-download-in-svg-png-gif-file-formats--social-media-brand-pack-logos-icons-3073750.png?f=webp&w=512", alt: "Telegram", app: "Telegram" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/2111/2111398.png", alt: "Instagram" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732228.png", alt: "Google Drive" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings" },
-                                  {
-                                      src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png",
-                                      alt: "Phone",
-                                      app: "Phone"
-},
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png", alt: "Gallery" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828970.png", alt: "Music" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828961.png", alt: "Notes" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828843.png", alt: "Clock" },
-                                  { src: "https://cdn-icons-png.flaticon.com/512/1828/1828998.png", alt: "Files" }
-                              ].map((app, index) => (
-                                  <button
-                                      key={index}
-                                      style={{
-                                          width: "100%",
-                                          aspectRatio: "1 / 1",
-                                          borderRadius: "0.5em",
-                                          border: "none",
-                                          backgroundImage: `url(${app.src})`,
-                                          backgroundSize: "contain",
-                                          backgroundPosition: "center",
-                                          backgroundRepeat: "no-repeat",
-                                          cursor: "pointer"
-                                      }}
-                                      aria-label={app.alt}
-                                      onClick={() => handleAppClick(app.app)}
-                                  />
-                              ))}
-                          </div>
-                      ) : (
-                          // Псевдо-сайт
-                          <div style={{
-                              position: "absolute",
-                              top: 0,
-                              left: 0,
-                              padding: "1em",
-                              width: "100%",
-                              height: "93.175%",
-                              background: "#fff",
-                              color: "#000",
-                              overflowY: "auto",
-                              fontSize: "10px",
-                              lineHeight: "1.4"
-                          }}>
-                              <div style={{ marginBottom: "1em", fontWeight: "bold" }}>{activeApp}</div>
-                              {activeApp === "YouTube" && (
-                                  <div style={bodyStyle}>
-                                      <header style={headerStyle}>
-                                          <h1>Недвижимость в Санкт-Петербурге</h1>
-                                          <p>Лучшие предложения прямо сейчас</p>
-                                      </header>
-                                      <main style={mainStyle}>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
-                                                  alt="Квартира у метро"
-                                                  style={imageStyle}
-                                              />
-                                              <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
-                                              <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
-                                          </div>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
-                                                  alt="ЖК Комфорт"
-                                                  style={imageStyle}
-                                              />
-                                              <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
-                                          </div>
-                                      </main>
-                                  </div>
-                              )}
-                              {activeApp === "Gmail" && (
-                                  <div>
-                                      <p>📧 Входящие:</p>
-                                      <ul>
-                                          <li><b>От:</b> Папа — "Где ты гуляешь?"</li>
-                                          <li><b>От:</b> Курьер — "Ваш заказ доставлен"</li>
-                                          <li><b>От:</b> Izя — "Ты идешь сегодня?" ❤️</li>
-                                      </ul>
-                                  </div>
-                              )}
-                              {activeApp === "Camera" && (
-                                  <div style={bodyStyle}>
-                                      <header style={headerStyle}>
-                                          <h1>Недвижимость в Санкт-Петербурге</h1>
-                                          <p>Лучшие предложения прямо сейчас</p>
-                                      </header>
-                                      <main style={mainStyle}>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
-                                                  alt="Квартира у метро"
-                                                  style={imageStyle}
-                                              />
-                                              <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
-                                              <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
-                                          </div>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
-                                                  alt="ЖК Комфорт"
-                                                  style={imageStyle}
-                                              />
-                                              <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
-                                          </div>
-                                      </main>
-                                  </div>
-                              )}
+{/*Телефон*/ }
+<DoubleTapWrapper
+    onDoubleTap={() => setIsPhoneVisible(false)}
+    onTap={() => { if (!isPhoneVisible) setIsPhoneVisible(true); }}
+>
+    <div
+        style={{
+            position: "absolute",
+            bottom: "20px",
+            right: "20px",
+            background: "linear-gradient(#e66465, #9198e5)",
+            width: "200px",
+            aspectRatio: "10 / 19.5",
+            borderRadius: "1.5em",
+            border: "0.5em solid black",
+            overflow: "hidden",
+            zIndex: 100,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            opacity: isPhoneVisible ? 1 : 0,
+            transition: 'opacity 0.3s ease',
+            // Разрешаем клики даже когда невидим
+            pointerEvents: 'auto',
+            // Прозрачная область для кликов когда скрыт
+            cursor: isPhoneVisible ? 'default' : 'pointer'
+        }}
+        onDoubleClick={() => setIsPhoneVisible(false)}
+        onClick={() => {
+            if (!isPhoneVisible) {
+                setIsPhoneVisible(true);
+            }
+        }
+        }
+    >
+        {/* Содержимое телефона */}
+        <div style={{ flex: 1, position: "relative", pointerEvents: isPhoneVisible ? 'auto' : 'none' }}>
+            {!appsHidden ? (
+                // Иконки приложений
+                <div className="app-grid" style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "0.5em",
+                    padding: "0.5em"
+                }}>
+                    {[
+                        { src: "https://cdn-icons-png.flaticon.com/512/174/174855.png", alt: "YouTube", app: "YouTube" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail", app: "Gmail" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера", app: "Camera" },
+                        { src: "https://cdn.iconscout.com/icon/free/png-512/free-telegram-logo-icon-download-in-svg-png-gif-file-formats--social-media-brand-pack-logos-icons-3073750.png?f=webp&w=512", alt: "Telegram", app: "Telegram" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/732/732200.png", alt: "Gmail" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/2111/2111398.png", alt: "Instagram" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/732/732228.png", alt: "Google Drive" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome" },
+                        /// начало изменения ///
+                        { src: "https://cdn-icons-png.flaticon.com/512/732/732190.png", alt: "Chrome", app: "Chrome" },
+                        /// конец изменения ///
+                        +++++++++++++++
 
-                              {activeApp === "Telegram" && (
-                                      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-                                          <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                              <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
-                                          </div>
+                        { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings" },
+                        /// начало изменения ///
+                        { src: "https://cdn-icons-png.flaticon.com/512/270/270798.png", alt: "Settings", app: "Settings" },
+                        /// конец изменения ///
+                        +++++++++++++++++
 
-                                          <div style={{ width: "100%", height: "90%", display: "flex" }}>
-                                              <div style={{ width: "30%", height: "100%", borderRight: "1px solid #ddd", overflowY: "auto" }}>
-                                                  <div style={{ padding: "10px", fontWeight: "bold", borderBottom: "1px solid #ddd" }}>Contacts</div>
-                                                  <div id="user-list" style={{ overflowY: "auto" }}>
-                                                      {telegramContacts.length === 0 && (
-                                                          <div style={{ padding: 10, textAlign: "center" }}>
-                                                              {telegramContacts.length === 0
-                                                                  ? "Загрузка контактов..."
-                                                                  : "Контакты не найдены"}
-                                                          </div>
-                                                      )}
-                                                      {telegramContacts.map((user, index) => (
-                                                          <div
-                                                              key={index}
-                                                              style={{
-                                                                  padding: "10px",
-                                                                  borderBottom: "1px solid #eee",
-                                                                  cursor: "pointer",
-                                                                  display: "flex",
-                                                                  alignItems: "center"
-                                                              }}
-                                                              onClick={() => setActiveChat(user)}
-                                                          >
-                                                              <div>
-                                                                  {user.firstName} {user.lastName}
-                                                              </div>
-                                                          </div>
-                                                      ))}
-                                                  </div>
-                                              </div>
-                                              <div style={{ width: "70%", height: "100%" }}>
-                                                  {activeChat && (
-                                                      <div style={{ padding: "10px" }}>
-                                                          <h3>Чат с {activeChat.firstName} {activeChat.lastName}</h3>
-                                                          {/* Контейнер сообщений с прокруткой */}
-                                                          <div
-                                                              id="chatContainer"
-                                                              style={{
-                                                                  flex: 1,
-                                                                  border: "1px solid #ddd",
-                                                                  padding: "10px",
-                                                                  overflowY: "auto",
-                                                                  marginBottom: "10px"
-                                                              }}
-                                                          >
-                                                              {messages.length === 0 ? (
-                                                                  <p style={{ textAlign: 'center', color: '#888' }}>Нет сообщений</p>
-                                                              ) : (
-                                                                  messages.map((msg) => (
-                                                                      <div
-                                                                          key={msg.id}
-                                                                          style={{
-                                                                              textAlign: msg.sender_id === userProfile?.id ? 'right' : 'left',
-                                                                              margin: '10px 0'
-                                                                          }}
-                                                                      >
-                                                                          <div style={{
-                                                                              display: 'inline-block',
-                                                                              padding: '8px 12px',
-                                                                              borderRadius: '12px',
-                                                                              background: msg.sender_id === userProfile?.id ? '#0084ff' : '#e5e5ea',
-                                                                              color: msg.sender_id === userProfile?.id ? '#fff' : '#000',
-                                                                              maxWidth: '80%'
-                                                                          }}>
-                                                                              {msg.message}
-                                                                          </div>
-                                                                          <div style={{
-                                                                              fontSize: '0.8em',
-                                                                              color: '#666',
-                                                                              marginTop: '4px'
-                                                                          }}>
-                                                                              {new Date(msg.created_at).toLocaleTimeString()}
-                                                                          </div>
-                                                                      </div>
-                                                                  ))
-                                                              )}
-                                                          </div>
-
-                                                          {/* Поле ввода и кнопка отправки */}
-                                                          <div style={{ display: 'flex' }}>
-                                                              <input
-                                                                  type="text"
-                                                                  value={newMessage}
-                                                                  onChange={(e) => setNewMessage(e.target.value)}
-                                                                  placeholder="Введите сообщение..."
-                                                                  style={{
-                                                                      flex: 1,
-                                                                      padding: '8px',
-                                                                      borderRadius: '20px',
-                                                                      border: '1px solid #ddd'
-                                                                  }}
-                                                                  onKeyDown={(e) => {
-                                                                      if (e.key === 'Enter') sendMessage();
-                                                                  }}
-                                                              />
-                                                              <button
-                                                                  onClick={sendMessage}
-                                                                  style={{
-                                                                      marginLeft: '8px',
-                                                                      padding: '8px 16px',
-                                                                      background: '#0084ff',
-                                                                      color: 'white',
-                                                                      border: 'none',
-                                                                      borderRadius: '20px',
-                                                                      cursor: 'pointer'
-                                                                  }}
-                                                              >
-                                                                  Отправить
-                                                              </button>
-                                                          </div>
-                                                      </div>
-                                                  )}
-                                              </div>
-                                          </div>
-                                      </div>
+                        {
+                            src: "https://cdn-icons-png.flaticon.com/512/1828/1828817.png",
+                            alt: "Phone",
+                            app: "Phone"
+                        },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828864.png", alt: "Камера" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png", alt: "Gallery" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828970.png", alt: "Music" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828961.png", alt: "Notes" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828843.png", alt: "Clock" },
+                        { src: "https://cdn-icons-png.flaticon.com/512/1828/1828998.png", alt: "Files" }
+                    ].map((app, index) => (
+                        <button
+                            key={index}
+                            style={{
+                                width: "100%",
+                                aspectRatio: "1 / 1",
+                                borderRadius: "0.5em",
+                                border: "none",
+                                backgroundImage: `url(${app.src})`,
+                                backgroundSize: "contain",
+                                backgroundPosition: "center",
+                                backgroundRepeat: "no-repeat",
+                                cursor: "pointer"
+                            }}
+                            aria-label={app.alt}
+                            onClick={() => handleAppClick(app.app)}
+                        />
+                    ))}
+                </div>
+            ) : (
+                // Псевдо-сайт
+                <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    padding: "1em",
+                    width: "100%",
+                    height: "93.175%",
+                    background: "#fff",
+                    color: "#000",
+                    overflowY: "auto",
+                    fontSize: "10px",
+                    lineHeight: "1.4"
+                }}>
+                    <div style={{ marginBottom: "1em", fontWeight: "bold" }}>{activeApp}</div>
+                    {activeApp === "YouTube" && (
+                        <div style={bodyStyle}>
+                            <header style={headerStyle}>
+                                <h1>Недвижимость в Санкт-Петербурге</h1>
+                                <p>Лучшие предложения прямо сейчас</p>
+                            </header>
+                            <main style={mainStyle}>
+                                <div style={listingStyle}>
+                                    <img
+                                        src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
+                                        alt="Квартира у метро"
+                                        style={imageStyle}
+                                    />
+                                    <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
+                                    <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
+                                </div>
+                                <div style={listingStyle}>
+                                    <img
+                                        src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
+                                        alt="ЖК Комфорт"
+                                        style={imageStyle}
+                                    />
+                                    <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
+                                </div>
+                            </main>
+                        </div>
+                    )}
+                    {activeApp === "Gmail" && (
+                        <div>
+                            <p>📧 Входящие:</p>
+                            <ul>
+                                <li><b>От:</b> Папа — "Где ты гуляешь?"</li>
+                                <li><b>От:</b> Курьер — "Ваш заказ доставлен"</li>
+                                <li><b>От:</b> Izя — "Ты идешь сегодня?" ❤️</li>
+                            </ul>
+                        </div>
+                    )}
+/// начало изменения ///
                                   )}
+                    /// конец изменения ///
+                    ++++
+
+                    /// начало изменения ///
+
+                    {activeApp === "Chrome" && (
+                        <div style={bodyStyle}>
+                            <header style={headerStyle}>
+                                <h1>Прогресс квестов</h1>
+                            </header>
+                            <main style={mainStyle}>
+                                {questsProgress.length === 0 ? (
+                                    <p>Нет активных квестов</p>
+                                ) : (
+                                    questsProgress.map(quest => (
+                                        <div key={quest.id} style={listingStyle}>
+                                            <h3 style={listingTitleStyle}>{quest.title}</h3>
+                                            <div style={{
+                                                width: '100%',
+                                                height: '20px',
+                                                backgroundColor: '#e0e0e0',
+                                                borderRadius: '10px',
+                                                margin: '10px 0'
+                                            }}>
+                                                <div style={{
+                                                    width: `${quest.progress}%`,
+                                                    height: '100%',
+                                                    backgroundColor: quest.progress === 100 ? '#4CAF50' : '#2196F3',
+                                                    borderRadius: '10px',
+                                                    transition: 'width 0.3s ease'
+                                                }}></div>
+                                            </div>
+                                            <p>Выполнено: {quest.completed} из {quest.total} ({quest.progress}%)</p>
+                                        </div>
+                                    ))
+                                )}
+                            </main>
+                        </div>
+                    )}
+/// конец изменения ///
+                    {activeApp === "Camera" && (
+                        <div style={bodyStyle}>
+                            <header style={headerStyle}>
+                                <h1>Недвижимость в Санкт-Петербурге</h1>
+                                <p>Лучшие предложения прямо сейчас</p>
+                            </header>
+                            <main style={mainStyle}>
+                                <div style={listingStyle}>
+                                    <img
+                                        src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
+                                        alt="Квартира у метро"
+                                        style={imageStyle}
+                                    />
+                                    <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
+                                    <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
+                                </div>
+                                <div style={listingStyle}>
+                                    <img
+                                        src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
+                                        alt="ЖК Комфорт"
+                                        style={imageStyle}
+                                    />
+                                    <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
+                                </div>
+                            </main>
+                        </div>
+                    )}
+
+/// начало изменения ///
+
+                    /// конец изменения ///
+                    {activeApp === "Telegram" && (
+                        <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                            <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
+                            </div>
+
+                            <div style={{ width: "100%", height: "90%", display: "flex" }}>
+                                <div style={{ width: "30%", height: "100%", borderRight: "1px solid #ddd", overflowY: "auto" }}>
+                                    <div style={{ padding: "10px", fontWeight: "bold", borderBottom: "1px solid #ddd" }}>Contacts</div>
+                                    <div id="user-list" style={{ overflowY: "auto" }}>
+                                        {telegramContacts.length === 0 && (
+                                            <div style={{ padding: 10, textAlign: "center" }}>
+                                                {telegramContacts.length === 0
+                                                    ? "Загрузка контактов..."
+                                                    : "Контакты не найдены"}
+                                            </div>
+                                        )}
+                                        {telegramContacts.map((user, index) => (
+                                            <div
+                                                key={index}
+                                                style={{
+                                                    padding: "10px",
+                                                    borderBottom: "1px solid #eee",
+                                                    cursor: "pointer",
+                                                    display: "flex",
+                                                    alignItems: "center"
+                                                }}
+                                                onClick={() => setActiveChat(user)}
+                                            >
+                                                <div>
+                                                    {user.firstName} {user.lastName}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div style={{ width: "70%", height: "100%" }}>
+                                    {activeChat && (
+                                        <div style={{ padding: "10px" }}>
+                                            <h3>Чат с {activeChat.firstName} {activeChat.lastName}</h3>
+                                            {/* Контейнер сообщений с прокруткой */}
+                                            <div
+                                                id="chatContainer"
+                                                style={{
+                                                    flex: 1,
+                                                    border: "1px solid #ddd",
+                                                    padding: "10px",
+                                                    overflowY: "auto",
+                                                    marginBottom: "10px"
+                                                }}
+                                            >
+                                                {messages.length === 0 ? (
+                                                    <p style={{ textAlign: 'center', color: '#888' }}>Нет сообщений</p>
+                                                ) : (
+                                                    messages.map((msg) => (
+                                                        <div
+                                                            key={msg.id}
+                                                            style={{
+                                                                textAlign: msg.sender_id === userProfile?.id ? 'right' : 'left',
+                                                                margin: '10px 0'
+                                                            }}
+                                                        >
+                                                            <div style={{
+                                                                display: 'inline-block',
+                                                                padding: '8px 12px',
+                                                                borderRadius: '12px',
+                                                                background: msg.sender_id === userProfile?.id ? '#0084ff' : '#e5e5ea',
+                                                                color: msg.sender_id === userProfile?.id ? '#fff' : '#000',
+                                                                maxWidth: '80%'
+                                                            }}>
+                                                                {msg.message}
+                                                            </div>
+                                                            <div style={{
+                                                                fontSize: '0.8em',
+                                                                color: '#666',
+                                                                marginTop: '4px'
+                                                            }}>
+                                                                {new Date(msg.created_at).toLocaleTimeString()}
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+
+                                            {/* Поле ввода и кнопка отправки */}
+                                            <div style={{ display: 'flex' }}>
+                                                <input
+                                                    type="text"
+                                                    value={newMessage}
+                                                    onChange={(e) => setNewMessage(e.target.value)}
+                                                    placeholder="Введите сообщение..."
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px',
+                                                        borderRadius: '20px',
+                                                        border: '1px solid #ddd'
+                                                    }}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') sendMessage();
+                                                    }}
+                                                />
+                                                <button
+                                                    onClick={sendMessage}
+                                                    style={{
+                                                        marginLeft: '8px',
+                                                        padding: '8px 16px',
+                                                        background: '#0084ff',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '20px',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    Отправить
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
 
-                          </div>
-                      )}
-                  </div>
+                </div>
+            )}
+        </div>
 
-                  {/* Нижняя кнопка */}
-                  <div style={{
-                      backgroundColor: "black",
-                      width: "100%",
-                      height: "10%",
-                      borderTop: "0.5em solid black",
-                      display: "flex",
-                      justifyContent: "center",
-                      alignItems: "center"
-                  }}>
-                      <div
-                          style={{
-                              backgroundColor: "white",
-                              width: "15%",
-                              aspectRatio: "1 / 1",
-                              borderRadius: "50%",
-                              border: "2px solid black"
-                          }}
-                      >
-                          <button onClick={closeApp} style={{
-                              opacity: 0,
-                              position: "absolute",
-                              bottom: "6px",
-                              left: "50%",
-                              transform: "translateX(-50%)",
-                              padding: "0.5em 1em",
-                              borderRadius: "10em",
-                              background: "#000",
-                              color: "white",
-                              border: "none",
-                              cursor: "pointer"
-                          }}>
-                              ⬅ Назад
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          </DoubleTapWrapper>
+        {/* Нижняя кнопка */}
+        <div style={{
+            backgroundColor: "black",
+            width: "100%",
+            height: "10%",
+            borderTop: "0.5em solid black",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center"
+        }}>
+            <div
+                style={{
+                    backgroundColor: "white",
+                    width: "15%",
+                    aspectRatio: "1 / 1",
+                    borderRadius: "50%",
+                    border: "2px solid black"
+                }}
+            >
+                <button onClick={closeApp} style={{
+                    opacity: 0,
+                    position: "absolute",
+                    bottom: "6px",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    padding: "0.5em 1em",
+                    borderRadius: "10em",
+                    background: "#000",
+                    color: "white",
+                    border: "none",
+                    cursor: "pointer"
+                }}>
+                    ⬅ Назад
+                </button>
+            </div>
+        </div>
     </div>
+</DoubleTapWrapper>
+    </div >
   );
 }
 
 const btnStyle = {
-  flex: 1,
-  padding: '8px 12px',
-  background: '#17a2b8',
-  border: 'none',
-  borderRadius: 4,
-  color: '#fff',
-  cursor: 'pointer'
+    flex: 1,
+    padding: '8px 12px',
+    background: '#17a2b8',
+    border: 'none',
+    borderRadius: 4,
+    color: '#fff',
+    cursor: 'pointer'
 };
 
 export default Game;

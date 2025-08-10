@@ -656,8 +656,38 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
     res.status(500).json({ error: 'Не удалось загрузить определение интерьера' });
   }
 });
+// Начало копи
+app.post('/api/listen', authenticate, async (req, res) => {
+    const { player_id, json_filename } = req.body;
+    console.log('Request data:', { player_id, json_filename }); // Добавьте в начало обработчика
+    if (!player_id || !json_filename) {
+        return res.status(400).json({
+            success: false,
+            error: 'player_id and json_filename are required'
+        });
+    }
+    try {
+        console.log("Маму ебал этого сервера");
+        await virtualWorldPool.query(`
+    INSERT INTO json_listened (player_id, json_filename)
+    VALUES ($1, $2)
+`, [player_id, json_filename]);
 
-
+        res.status(200).json({ success: true });
+    } catch (err) {
+        console.error('Full DB error:', {
+            message: err.message,
+            stack: err.stack,
+            query: err.query // Если поддерживается вашим драйвером БД
+        });
+        res.status(500).json({
+            success: false,
+            error: 'Database operation failed',
+            details: process.env.NODE_ENV === 'development' ? err.message : null
+        });
+    }
+});
+//Конец копи
 
 // Получить организацию по objectId
 app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res) => {
@@ -687,8 +717,177 @@ app.get('/api/organizations/by-object/:objectId', authenticate, async (req, res)
     res.status(500).json({ error: 'Ошибка получения меню организации' });
   }
 });
+//Начало копи
+function generateTransactions() {
+    const transactions = [];
+    const suspiciousCount = Math.min(3 + Math.floor(level / 3), 5);
+    const suspiciousIds = [];
 
+    while (suspiciousIds.length < suspiciousCount) {
+        const id = Math.floor(Math.random() * 15);
+        if (!suspiciousIds.includes(id)) {
+            suspiciousIds.push(id);
+        }
+    }
+    // Генерируем 15 транзакций
+    for (let i = 0; i < 15; i++) {
+        const isSuspicious = suspiciousIds.includes(i);
+        // ... остальной код генерации транзакции ...
+    }
 
+    return transactions;
+}
+
+// Завершение игры
+app.post('/api/cleanup-game/finish', authenticate, async (req, res) => {
+    try {
+        const { success, markedTransactions, personalArchive } = req.body;
+        const userId = req.user.id;
+
+        // Здесь должна быть логика обновления прогресса игрока
+        // Например, увеличение репутации, разблокировка квестов и т.д.
+
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: 'Ошибка сохранения результата игры' });
+    }
+});
+
+// Вспомогательная функция для генерации транзакций
+function getRandomCity() {
+    const cities = ["Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург", "Казань", "Самара", "Омск", "Челябинск", "Ростов-на-Дону", "Уфа"];
+    return cities[Math.floor(Math.random() * cities.length)];
+}
+
+function getRandomIP() {
+    return `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+}
+
+function getRandomDevice() {
+    const devices = ["Chrome Win", "Safari iOS", "Android", "Firefox Mac", "Edge Win", "Opera Win"];
+    return devices[Math.floor(Math.random() * devices.length)];
+}
+
+function getRandomPurpose() {
+    const purposes = [
+        "Покупка продуктов",
+        "Оплата услуг",
+        "Перевод другу",
+        "Оплата аренды",
+        "Покупка техники",
+        "Благотворительность",
+        "Образовательные курсы"
+    ];
+    return purposes[Math.floor(Math.random() * purposes.length)];
+}
+
+function getRandomRecipient() {
+    const recipients = [
+        "Пятёрочка №17",
+        "ИП Сидоров И.И.",
+        "OOO 'Комплекс-С'",
+        "ИП Петрова А.А.",
+        "Магнит №45",
+        "Ашан Супермаркет",
+        "ООО 'ТехноПрофи'"
+    ];
+    return recipients[Math.floor(Math.random() * recipients.length)];
+}
+
+function getSuspiciousIP() {
+    // Генерируем IP из известных VPN диапазонов или Tor exit nodes
+    const vpnRanges = [
+        "185.2.33.", "213.42.12.", "172.16.", "192.168.", "10.0."
+    ];
+    const range = vpnRanges[Math.floor(Math.random() * vpnRanges.length)];
+    return range + Math.floor(Math.random() * 255);
+}
+
+function getSuspiciousDevice() {
+    // Подозрительные устройства - одинаковые для разных транзакций
+    const suspiciousDevices = [
+        "Tor Browser",
+        "Android 4.4.2 (старая версия)",
+        "iPhone 6 (iOS 10)",
+        "Emulator Android"
+    ];
+    return suspiciousDevices[Math.floor(Math.random() * suspiciousDevices.length)];
+}
+
+// Обновленная функция генерации транзакций
+function generateTransactions() {
+    const transactions = [];
+    const suspiciousIds = [0, 5, 10]; // Фиксированные индексы подозрительных транзакций
+
+    // Генерируем 15 транзакций
+    for (let i = 0; i < 15; i++) {
+        const isSuspicious = suspiciousIds.includes(i);
+        const baseDate = new Date(2023, 6, 25); // 25 июля 2023
+
+        let date, amount, purpose, ip, city, device, recipient;
+        let anomalyType = isSuspicious ? i % 3 : null; // 0, 1 или 2 для подозрительных
+
+        if (isSuspicious) {
+            date = new Date(baseDate.getTime() + Math.floor(i / 5) * 24 * 60 * 60 * 1000);
+            amount = `₽${Math.floor(200000 + Math.random() * 800000).toLocaleString()}`;
+
+            switch (anomalyType) {
+                case 0: // Географический прыжок
+                    date.setHours(date.getHours() + 1);
+                    ip = getSuspiciousIP();
+                    city = i % 2 === 0 ? "Москва" : "Самара";
+                    device = getRandomDevice();
+                    purpose = getRandomPurpose();
+                    recipient = getRandomRecipient();
+                    break;
+
+                case 1: // Пустое назначение + VPN
+                    ip = getSuspiciousIP();
+                    city = getRandomCity();
+                    device = getSuspiciousDevice();
+                    purpose = '';
+                    recipient = getRandomRecipient();
+                    break;
+
+                case 2: // Повтор получателя
+                    ip = getRandomIP();
+                    city = getRandomCity();
+                    device = getRandomDevice();
+                    purpose = getRandomPurpose();
+                    recipient = "ООО 'Сомнительные Переводы'";
+                    break;
+            }
+        } else {
+            // Нормальные транзакции
+            date = new Date(baseDate.getTime() + Math.floor(i / 5) * 24 * 60 * 60 * 1000);
+            amount = `₽${Math.floor(1000 + Math.random() * 20000).toLocaleString()}`;
+            purpose = getRandomPurpose();
+            ip = getRandomIP();
+            city = getRandomCity();
+            device = getRandomDevice();
+            recipient = getRandomRecipient();
+        }
+
+        transactions.push({
+            id: i,
+            date: date.toLocaleDateString(),
+            time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            amount,
+            purpose: isSuspicious && Math.random() > 0.5 ? '' : purpose,
+            ip: isSuspicious && Math.random() > 0.7 ? '' : ip,
+            city,
+            device: isSuspicious && Math.random() > 0.5 ? '' : device,
+            recipient,
+            _realIp: isSuspicious ? getSuspiciousIP() : ip,
+            _realDevice: isSuspicious ? getSuspiciousDevice() : device,
+            _isSuspicious: isSuspicious,
+            _anomalyType: anomalyType
+        });
+    }
+
+    return transactions;
+}
+//Конец копи
 // Покупка товара в организации
 app.post('/api/organizations/:id/purchase', authenticate, async (req, res) => {
   const { id } = req.params;
@@ -714,8 +913,93 @@ app.post('/api/organizations/:id/purchase', authenticate, async (req, res) => {
     res.status(500).json({ error: 'Ошибка покупки' });
   }
 });
+//Начало копи
+app.get('/api/quests/progress', authenticate, async (req, res) => {
+    console.log("Загрузка на сервере. ID пользователя:", req.user.id);
 
+    try {
+        // Получаем email пользователя из основной БД
+        const userRes = await db.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+        if (userRes.rows.length === 0) {
+            return res.status(404).json({ error: 'Пользователь не найден' });
+        }
+        const userEmail = userRes.rows[0].email;
 
+        // Получаем список всех квестов с их JSON файлами
+        const questsQuery = await virtualWorldPool.query(`
+            SELECT q.id, q.title, qj.json_filename
+            FROM quests q
+            JOIN quest_jsons qj ON q.id = qj.quest_id
+            ORDER BY q.id
+        `);
+
+        // Получаем JSON файлы, которые прослушал игрок
+        const listenedQuery = await virtualWorldPool.query(`
+            SELECT json_filename FROM json_listened 
+            WHERE player_id = $1
+        `, [userEmail]);
+
+        console.log("Результат запроса listenedQuery:", listenedQuery.rows);
+
+        const listenedFiles = new Set(listenedQuery.rows.map(row => row.json_filename));
+        console.log("Прослушанные файлы:", Array.from(listenedFiles));
+
+        // Остальной код остается без изменений...
+        const questsMap = new Map();
+        questsQuery.rows.forEach(row => {
+            if (!questsMap.has(row.id)) {
+                questsMap.set(row.id, {
+                    id: row.id,
+                    title: row.title,
+                    total: 0,
+                    completed: 0,
+                    files: []
+                });
+            }
+            const quest = questsMap.get(row.id);
+            quest.total++;
+            quest.files.push(row.json_filename);
+            if (listenedFiles.has(row.json_filename)) {
+                quest.completed++;
+            }
+        });
+
+        const result = Array.from(questsMap.values()).map(quest => ({
+            id: quest.id,
+            title: quest.title,
+            progress: quest.total > 0 ? Math.round((quest.completed / quest.total) * 100) : 0,
+            completed: quest.completed,
+            total: quest.total
+        }));
+
+        console.log("Результат для клиента:", result);
+        res.json(result);
+    } catch (err) {
+        console.error('Ошибка получения прогресса квестов:', err);
+        res.status(500).json({ error: 'Ошибка получения прогресса квестов' });
+    }
+});
+
+app.get('/api/cleanup-game/data', authenticate, async (req, res) => {
+    try {
+        const level = parseInt(req.query.level) || 1;
+        // Генерируем транзакции с учетом уровня
+        const transactions = generateTransactions(level);
+
+        res.json({
+            success: true,
+            transactions: transactions,
+            level: level
+        });
+    } catch (e) {
+        console.error('Ошибка генерации данных игры:', e);
+        res.status(500).json({
+            success: false,
+            error: 'Ошибка генерации данных игры'
+        });
+    }
+});
+//Конец копи
 // Сохранить текущую карту в текстовый файл
 app.post('/api/save-map', authenticate, async (req, res) => {
   const { cityId = 'unknown', objects, removedIds = [] } = req.body;
