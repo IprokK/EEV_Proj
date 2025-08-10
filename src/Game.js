@@ -2169,10 +2169,15 @@ function stopMove(dir) {
       {selectedHouse && (
         <div style={{
           position: 'absolute',
-          top: 20, right: 20,
+          top: 20,
+          right: 20,
           background: 'rgba(0,0,0,0.8)',
-          color: '#fff', padding: 16,
-          borderRadius: 8, minWidth: 220
+          color: '#fff',
+          padding: 16,
+          borderRadius: 8,
+          minWidth: 220,
+          zIndex: 3000,
+          pointerEvents: 'auto'
         }}>
           <h3 style={{ margin: 0, marginBottom: 8 }}>🏠 {selectedHouse.type}</h3>
           <p style={{ margin: '4px 0' }}>
@@ -2434,7 +2439,7 @@ function stopMove(dir) {
                 <div style={{fontWeight: 600}}>{it.title || it.key}</div>
                 {it.price != null && <div style={{opacity: .8, fontSize: 12}}>{Number(it.price)} ₽</div>}
               </div>
-              <button onClick={() => purchaseItem(orgMenu.id, it.key)}>Купить</button>
+              <button onClick={() => buyItem(it.key)}>Купить</button>
             </div>
           ))}
 
