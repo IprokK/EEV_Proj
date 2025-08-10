@@ -16,111 +16,73 @@ const avatars = {
 
 export default function RegisterStep3() {
   const navigate = useNavigate();
-  const [gender, setGender] = useState(null);
+  const [gender, setGender] = useState('male');
   const [avatarURL, setAvatarURL] = useState('');
 
-  // подтягиваем данные из sessionStorage
-  useEffect(() => {
-    const s1 = sessionStorage.getItem('reg_step1');
-    const s2 = sessionStorage.getItem('reg_step2');
-    if (!s1) return navigate('/register/step1');
-    if (!s2) return navigate('/register/step2');
-    const { gender } = JSON.parse(s2);
-    setGender(gender);
-  }, [navigate]);
-
-  const handleSelect = url => setAvatarURL(url);
-
-  const handleSubmit = async () => {
-    if (!avatarURL) return;
-    const { email, password } = JSON.parse(sessionStorage.getItem('reg_step1'));
-    const { firstName, lastName, gender, age, city } =
-      JSON.parse(sessionStorage.getItem('reg_step2'));
-
-    const payload = { email, password,
-      firstName, lastName,
-      gender, age, city,
-      avatarURL
-    };
-
+  async function handleSubmit(e) {
+    e.preventDefault();
     try {
-      // либо используйте proxy из CRA, тогда fetch('/api/register')
+      // завершающий вызов регистрации (оставь твой URL/тело запроса как было)
       const res = await fetch('/api/register', {
         method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify(payload)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gender, avatarURL })
       });
-      if (!res.ok) {
-        const err = await res.json();
-        return alert('Ошибка: ' + (err.error || res.statusText));
-      }
       const data = await res.json();
-      if (data.success) {
-        localStorage.setItem('token', data.token);
-        sessionStorage.setItem(
-          'user_profile',
-          JSON.stringify({ avatarURL, gender })
-        );
-        navigate('/game');
-      } else {
-        alert(data.error || 'Не удалось зарегистрироваться');
+      if (!res.ok || !data.success) {
+        alert('Ошибка регистрации');
+        return;
       }
+
+      // сохраняем токен
+      localStorage.setItem('token', data.token);
+
+      // добираем профиль
+      const meRes = await fetch('/api/me', {
+        headers: { Authorization: `Bearer ${data.token}` }
+      });
+      const me = meRes.ok ? await meRes.json() : null;
+
+      // собираем профиль для игры
+      const user_profile = {
+        id: me?.id,
+        email: me?.email,
+        firstName: me?.firstName,
+        lastName: me?.lastName,
+        gender: me?.gender ?? gender,
+        age: me?.age,
+        city: me?.city,
+        avatarURL: avatarURL || me?.avatarURL,
+        balance: me?.balance ?? 0,
+        satiety: me?.satiety ?? 100,
+        thirst: me?.thirst ?? 100,
+        last_city_id: me?.lastCityId ?? 1
+      };
+
+      sessionStorage.setItem('user_profile', JSON.stringify(user_profile));
+      navigate('/game');
     } catch (e) {
       console.error(e);
-      alert('Сетевая ошибка: ' + e.message);
+      alert('Ошибка регистрации (шаг 3)');
     }
-  };
+  }
 
   return (
-    <div style={styles.wrapper}>
-      <h2>
-        Выберите персонажа&nbsp;
-        <small>({gender==='male'?'мужской':'женский'})</small>
-      </h2>
-
-      <div style={styles.grid}>
-        {avatars[gender]?.map(a => (
-          <div
-            key={a.url}
-            style={{
-              ...styles.avatarCard,
-              boxShadow: avatarURL===a.url
-                ? '0 0 0 3px #0f0'
-                : 'none'
-            }}
-            onClick={() => handleSelect(a.url)}
-          >
-            <p style={{
-              color: avatarURL===a.url ? '#0f0' : '#fff'
-            }}>{a.name}</p>
-            <model-viewer
-              src={a.url}
-              camera-controls
-              style={{ width:150, height:200 }}
-            />
-          </div>
-        ))}
-      </div>
-
-      <button
-        onClick={handleSubmit}
-        disabled={!avatarURL}
-        style={{
-          ...styles.button,
-          opacity: avatarURL ? 1 : 0.5,
-          cursor: avatarURL ? 'pointer' : 'not-allowed'
-        }}
-      >
-        Завершить регистрацию
-      </button>
-
-      <button
-        onClick={() => navigate('/register/step2')}
-        style={styles.back}
-      >
-        ← Назад
-      </button>
-    </div>
+    <form onSubmit={handleSubmit} style={{ maxWidth: 400, margin: '40px auto' }}>
+      <h2>Шаг 3: профиль</h2>
+      <label style={{ display: 'block', marginBottom: 8 }}>
+        Пол:
+        <select value={gender} onChange={e => setGender(e.target.value)} style={{ marginLeft: 8 }}>
+          <option value="male">Мужской</option>
+          <option value="female">Женский</option>
+        </select>
+      </label>
+      <label style={{ display: 'block', marginBottom: 8 }}>
+        URL аватара:
+        <input value={avatarURL} onChange={e => setAvatarURL(e.target.value)} style={{ width: '100%' }} />
+      </label>
+      <button type="submit">Завершить</button>
+    </form>
   );
 }
 

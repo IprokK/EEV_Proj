@@ -570,19 +570,29 @@ function Game({ avatarUrl, gender }) {
       const orgRes = await fetch(`/api/organizations/${orgId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!orgRes.ok) throw new Error(`status ${orgRes.status}`);
-      const org = await orgRes.json();
+
+      let name = 'Организация';
+      if (orgRes.ok) {
+        const org = await orgRes.json();
+        name = org.name;
+      }
+
       const setRes = await fetch(`/api/organizations/${orgId}/settings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const settings = setRes.ok ? await setRes.json() : {};
-      setOrgMenu({ id: orgId, name: org.name, menu: settings.menu || {} });
+      const settings = setRes.ok ? await setRes.json() : { menu: [] };
+
+      // сервер уже отдаёт menu как массив
+      const menuArray = Array.isArray(settings.menu) ? settings.menu : [];
+
+      setOrgMenu({ id: orgId, name, menu: menuArray });
       setSelectedHouse(null);
     } catch (e) {
       console.error('Не удалось загрузить меню организации', orgId, e);
       alert('Ошибка загрузки меню организации');
     }
   }
+
 
   function openOrganizationPanel(orgId) {
     setOrgPanelId(orgId);
@@ -2404,25 +2414,36 @@ function stopMove(dir) {
       {orgMenu && (
         <div style={{
           position: 'absolute',
-          top: '50%',
-          left: '50%',
+          top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          background: 'rgba(0,0,0,0.8)',
+          background: 'rgba(0,0,0,0.85)',
           color: '#fff',
           padding: 16,
-          borderRadius: 8,
-          minWidth: 220
+          borderRadius: 10,
+          minWidth: 260,
+          maxWidth: 420,
+          zIndex: 3000
         }}>
-          <h3 style={{ margin: 0, marginBottom: 8 }}>{orgMenu.name}</h3>
-          {orgMenu.menu && Object.keys(orgMenu.menu).map(key => (
-            <div key={key} style={{marginBottom:8}}>
-              <span>{orgMenu.menu[key].title} — {orgMenu.menu[key].price}₽</span>
-              <button onClick={() => buyItem(key)} style={{marginLeft:8}}>Купить</button>
+          <h3 style={{marginTop: 0, marginBottom: 10}}>{orgMenu.name}</h3>
+
+          {/* orgMenu.menu теперь массив элементов */}
+          {(!orgMenu.menu || orgMenu.menu.length === 0) && <p>Меню пусто</p>}
+          {Array.isArray(orgMenu.menu) && orgMenu.menu.map(it => (
+            <div key={it.key} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
+              <div>
+                <div style={{fontWeight: 600}}>{it.title || it.key}</div>
+                {it.price != null && <div style={{opacity: .8, fontSize: 12}}>{Number(it.price)} ₽</div>}
+              </div>
+              <button onClick={() => purchaseItem(orgMenu.id, it.key)}>Купить</button>
             </div>
           ))}
-          <button onClick={() => setOrgMenu(null)} style={{ marginTop: 8 }}>Закрыть</button>
+
+          <div style={{textAlign: 'right', marginTop: 10}}>
+            <button onClick={() => setOrgMenu(null)}>Закрыть</button>
+          </div>
         </div>
       )}
+
 
       {orgPanelId && (
         <OrgControlPanel orgId={orgPanelId} onClose={() => setOrgPanelId(null)} />
