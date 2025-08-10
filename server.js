@@ -1,12 +1,12 @@
 require('dotenv').config();
 const express = require('express');
-const compression = require('compression');
 const db = require('./db');
 const Economy = require('./economy');
 const GameTime = require('./gameTime');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+const organizationsRouter = require('./server/organizations');
 
 const { virtualWorldPool } = require('./db1');
 
@@ -28,10 +28,11 @@ async function ensureMessagesTable() {
 }
 
 ensureMessagesTable();
-app.use(compression());
+
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/api/organizations', organizationsRouter);
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -49,10 +50,7 @@ const io = require('socket.io')(http, {
 const economy = new Economy(io, db);
 const gameTime = new GameTime(io, 8);
 
-let onlineUsers = {};
-
-const organizationsRouter = require('./server/organizations')(io, onlineUsers);
-app.use('/api/organizations', organizationsRouter);
+let onlineUsers = {};   
 
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
