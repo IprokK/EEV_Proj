@@ -1,0 +1,33 @@
+{
+  "name": "Охранник",
+  "avatar": "/images/npc/guard.jpg",
+  "filename": "Oxranik.json",
+  "dialog": [
+    {
+      "id": 0,
+      "text": "Стоять! Кто такой?",
+      "answers": [
+        {
+          "text": "Березовый сок",
+          "next": 1,
+          "required_quest": "hack_job"
+        },
+        {
+          "text": "Я ошибся дверью",
+          "end": true
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "text": "(кивает) Проходи. Но предупреждаю - если что-то пойдет не так, я тебя не знал.",
+      "answers": [
+        {
+          "text": "Понял",
+          "quest_progress": "hack_job",
+          "end": true
+        }
+      ]
+    }
+  ]
+}

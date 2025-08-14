@@ -1,0 +1,177 @@
+{
+  "objects": [
+    {
+      "id": 1,
+      "name": "Burger",
+      "model_url": "models/copied/building-burger-joint.glb",
+      "pos_x": 25,
+      "pos_y": 0,
+      "pos_z": 50,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 4,
+      "name": "HouseModernBig2",
+      "model_url": "models/copied/building-house-modern-big.glb",
+      "pos_x": 50,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 9,
+      "name": "HouseModernBig",
+      "model_url": "models/copied/building-house-modern-big.glb",
+      "pos_x": 10,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 12,
+      "name": "HouseModernBig",
+      "model_url": "models/copied/building-house-modern-big.glb",
+      "pos_x": -70,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 3,
+      "name": "HouseOld",
+      "model_url": "models/copied/building-house-block-old.glb",
+      "pos_x": 25,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": -3.14,
+      "rot_z": 0
+    },
+    {
+      "id": 8,
+      "name": "HouseSmall",
+      "model_url": "models/copied/building-house-family-small.glb",
+      "pos_x": 70,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 11,
+      "name": "HouseSmall",
+      "model_url": "models/copied/building-house-family-small.glb",
+      "pos_x": -50,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 2,
+      "name": "HouseSmall",
+      "model_url": "models/copied/building-house-family-small.glb",
+      "pos_x": 25,
+      "pos_y": 0,
+      "pos_z": 0,
+      "rot_x": 0,
+      "rot_y": 3.14,
+      "rot_z": 0
+    },
+    {
+      "id": 6,
+      "name": "HouseModernBig2",
+      "model_url": "models/copied/building-cinema.glb",
+      "pos_x": 150,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 5,
+      "name": "HouseModernBig2",
+      "model_url": "models/copied/building-hotel.glb",
+      "pos_x": 100,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 10,
+      "name": "HouseModernBig2",
+      "model_url": "models/copied/building-mall.glb",
+      "pos_x": -25,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "id": 7,
+      "name": "HouseModernBig2",
+      "model_url": "models/copied/building-mall.glb",
+      "pos_x": 250,
+      "pos_y": 0,
+      "pos_z": 25,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "name": "lamp-road.glb",
+      "model_url": "/models/copied/lamp-road.glb",
+      "pos_x": 0,
+      "pos_y": 0,
+      "pos_z": 0,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "name": "lamp-road-double.glb",
+      "model_url": "/models/copied/lamp-road-double.glb",
+      "pos_x": 0,
+      "pos_y": 0,
+      "pos_z": 0,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "name": "tile-road-curve.glb",
+      "model_url": "/models/copied/tile-road-curve.glb",
+      "pos_x": 0,
+      "pos_y": 0,
+      "pos_z": 0,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    },
+    {
+      "name": "tile-road-mainroad-intersection.glb",
+      "model_url": "/models/copied/tile-road-mainroad-intersection.glb",
+      "pos_x": 0,
+      "pos_y": 0,
+      "pos_z": 0,
+      "rot_x": 0,
+      "rot_y": 0,
+      "rot_z": 0
+    }
+  ],
+  "removedIds": []
+}
