@@ -48,7 +48,6 @@ function Game({ avatarUrl, gender }) {
   const getScene  = () => getRef(sceneRef, 'sceneRef');
   const getPlayer = () => getRef(playerRef, 'playerRef');
   const getCityGroup = () => getRef(cityGroupRef, 'cityGroupRef');
-  const getExitMarker = () => getRef(exitMarkerRef, 'exitMarkerRef');
 
   /**
    * Быстрые проверки перед действиями, требующими инициализации 3D.
@@ -74,6 +73,7 @@ function Game({ avatarUrl, gender }) {
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const isInInteriorRef = useRef(false);
   const LOAD_RADIUS = 120;
+  const ENTRY_DISTANCE = 5;
 
   const [activeApp, setActiveApp] = useState(null);
 
@@ -647,7 +647,11 @@ function Game({ avatarUrl, gender }) {
           return;
         }
         const data = await res.json();
-        const { spawn, exit, cityId } = data;
+        const { spawn, exit, marker_exit_x, marker_exit_y, marker_exit_z, marker_exit_rot, cityId } = data;
+        const exitPos = exit ||
+          (marker_exit_x !== undefined
+            ? { x: marker_exit_x, y: marker_exit_y, z: marker_exit_z, rot: marker_exit_rot }
+            : null);
         // Если интерьер в другом городе — переключаем город
         const profile0 = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myCityId0 = profile0.last_city_id || 1;
@@ -667,10 +671,10 @@ function Game({ avatarUrl, gender }) {
         player.rotation.y = THREE.MathUtils.degToRad(spawn.rot);
         // Можно добавить сброс скорости, анимации и т.д. при необходимости
         
-        setCurrentExit(exit || null);
+        setCurrentExit(exitPos || null);
         // Добавляем маркер выхода
-        if (exit) {
-          addExitMarker(exit);
+        if (exitPos) {
+          addExitMarker(exitPos);
         }
       } catch (e) {
         console.error('Failed to enter interior:', e);
@@ -699,13 +703,27 @@ function Game({ avatarUrl, gender }) {
         alert('Не заданы координаты выхода из интерьера!');
         return;
       }
-      if (playerRef.current) {
-        playerRef.current.position.set(currentExit.x, currentExit.y, currentExit.z);
-        playerRef.current.rotation.set(0, currentExit.rot || 0, 0);
+      const scene = getScene();
+      const player = getPlayer();
+      if (player) {
+        player.position.set(currentExit.x, currentExit.y, currentExit.z);
+        player.rotation.set(0, currentExit.rot || 0, 0);
       }
-      // Удаляем маркер выхода
-      if (window.exitMarkerMesh && sceneRef.current) {
-        sceneRef.current.remove(window.exitMarkerMesh);
+      if (scene) {
+        if (interiorGroupRef.current) {
+          scene.remove(interiorGroupRef.current);
+          interiorGroupRef.current = null;
+        }
+        if (cityGroupRef.current) {
+          scene.add(cityGroupRef.current);
+        }
+      }
+      toggleWorldVisibility(true);
+      switchToThirdPersonCamera();
+      document.exitPointerLock?.();
+      setIsInInterior(false);
+      if (window.exitMarkerMesh && scene) {
+        scene.remove(window.exitMarkerMesh);
         window.exitMarkerMesh = null;
       }
       setCurrentExit(null);
@@ -1095,7 +1113,12 @@ function Game({ avatarUrl, gender }) {
 
 
 async function movePlayerToInterior(interiorId) {
+  await loadInteriorScene(interiorId);
   await enterInterior(interiorId);
+  switchToFirstPersonCamera();
+  if (!isTouchDevice) {
+    rendererRef.current?.domElement.requestPointerLock?.();
+  }
 }
 
 function switchToFirstPersonCamera() {
@@ -1146,24 +1169,42 @@ useEffect(() => {
     raycaster.setFromCamera(mouse, cameraRef.current);
     // Ищем пересечения по интерактивам
     const objects = interiorInteractablesRef.current.filter(obj => obj?.isObject3D);
-    if (!objects.length) return;
-    const hits = raycaster.intersectObjects(objects, true)
-     .filter(h => h.object && h.object.userData && h.object.userData.interactable);
-    if (!hits.length) return;
-
-      const top = hits[0].object;
-      const payload = top.userData.payload || {};
-      // Дальше делай что нужно: диалог, меню, действие и т.п.
-      if (payload.type === 'marker') {
-        console.log('Нажат маркер:', payload);
-        // например, открыть окно диалога/описания
-        // setCurrentDialog(...); setShowDialog(true);
-      } else if (payload.type === 'npc') {
-        console.log('Нажат NPC:', payload);
-      // loadDialog(payload.id) и т.п.
-      } else {
-        console.log('Интерактив:', payload);
+    if (objects.length) {
+      const hits = raycaster
+        .intersectObjects(objects, true)
+        .filter(h => h.object && h.object.userData && h.object.userData.interactable);
+      if (hits.length) {
+        const top = hits[0].object;
+        const payload = top.userData.payload || {};
+        if (payload.type === 'marker') {
+          console.log('Нажат маркер:', payload);
+        } else if (payload.type === 'npc') {
+          console.log('Нажат NPC:', payload);
+          loadDialog(payload.id);
+        } else {
+          console.log('Интерактив:', payload);
+        }
+        return;
       }
+    }
+
+    const remoteModels = Object.values(remotePlayersRef.current)
+      .map(r => r.model)
+      .filter(Boolean);
+    if (remoteModels.length) {
+      const playerHits = raycaster.intersectObjects(remoteModels, true);
+      if (playerHits.length) {
+        let mesh = playerHits[0].object;
+        while (mesh && !remoteModels.includes(mesh)) mesh = mesh.parent;
+        const entry = Object.entries(remotePlayersRef.current).find(([, r]) => r.model === mesh);
+        if (entry) {
+          const [id, r] = entry;
+          setSelectedPlayer({ socketId: id, firstName: r.firstName, lastName: r.lastName });
+          setPlayerStats(null);
+        }
+        return;
+      }
+    }
     };
 
     window.addEventListener('click', onClick);
@@ -2262,7 +2303,12 @@ useEffect(() => {
             return;
           }
           if (obj && obj.userData.interiorId) {
-            await loadInteriorScene(obj.userData.interiorId);
+            const dist = player.position.distanceTo(houseHit[0].point);
+            if (dist > ENTRY_DISTANCE) {
+              alert('Вы слишком далеко от входа');
+              return;
+            }
+            await movePlayerToInterior(obj.userData.interiorId);
             return;
           }
         }
