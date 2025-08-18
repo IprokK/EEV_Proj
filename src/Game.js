@@ -121,11 +121,11 @@ function Game({ avatarUrl, gender }) {
   }, [satiety, thirst]);
 
 
-    const [currentDialog, setCurrentDialog] = useState(null);
-    const [dialogIndex, setDialogIndex] = useState(0);
-    const [showDialog, setShowDialog] = useState(false);
-    const [formData, setFormData] = useState({});
-    const [currentForm, setCurrentForm] = useState(null);
+    //const [currentDialog, setCurrentDialog] = useState(null);
+    //const [dialogIndex, setDialogIndex] = useState(0);
+    //const [showDialog, setShowDialog] = useState(false);
+    //const [formData, setFormData] = useState({});
+    //const [currentForm, setCurrentForm] = useState(null);
 
   //Телефон
     const scene = new THREE.Scene();
@@ -141,6 +141,20 @@ function Game({ avatarUrl, gender }) {
     // группа интерьера создаётся при входе в здание
     const savedPositionRef = useRef(new THREE.Vector3());
     const remotePlayersRef = useRef({});
+
+
+    const {
+        currentDialog,
+        dialogIndex,
+        showDialog,
+        formData,
+        currentForm,
+        loadDialog,
+        handleAnswerSelect,
+        handleFormSubmit,
+        handleFormChange,
+        setShowDialog
+    } = useDialogManager();
 
     useEffect(() => {
         const id = setInterval(() => {
@@ -459,7 +473,7 @@ function Game({ avatarUrl, gender }) {
         cursor: 'pointer'
     };
 
-    const loadDialog = async (npcId) => {
+    /*const loadDialog = async (npcId) => {
         try {
             const response = await fetch(`/dialogs/${npcId}.json`);
             const data = await response.json();
@@ -469,7 +483,7 @@ function Game({ avatarUrl, gender }) {
         } catch (error) {
             console.error('Ошибка загрузки диалога:', error);
         }
-    };
+    };*/
     const loader = new GLTFLoader();
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
@@ -580,7 +594,7 @@ function Game({ avatarUrl, gender }) {
       }
     };
 
-    const handleAnswerSelect = (answer) => {
+    /*const handleAnswerSelect = (answer) => {
         if (answer.end) {
             setShowDialog(false);
         } else if (answer.next !== undefined) {
@@ -627,7 +641,7 @@ function Game({ avatarUrl, gender }) {
             ...prev,
             [name]: value
         }));
-    };
+    };*/
 
     // Добавить функцию загрузки прогресса квестов:
     async function loadQuestsProgress() {
@@ -738,7 +752,7 @@ function Game({ avatarUrl, gender }) {
             if (res.ok) {
                 const data = await res.json();
                 setMessages(data);
-
+                console.log('Сообщение загружено');
                 // Прокручиваем чат вниз
                 setTimeout(() => {
                     const chatContainer = document.getElementById('chatContainer');
@@ -774,6 +788,7 @@ function Game({ avatarUrl, gender }) {
 
             if (res.ok) {
                 setNewMessage("");
+                console.log("Сообщение ушло");
                 // После отправки сразу обновляем сообщения
                 loadMessages(activeChat.id);
             } else {

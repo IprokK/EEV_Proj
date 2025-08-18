@@ -353,7 +353,7 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
     const senderId = req.user.id;
     const { receiverId, message } = req.body;
     const recvId = parseInt(receiverId, 10);
-
+    console.log("Запрос пошел");
     try {
         // Проверка существования получателя в основной БД
         const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
@@ -363,9 +363,9 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
 
         // Сохранение сообщения в virtual_world
         const result = await virtualWorldPool.query(
-            `INSERT INTO messages (sender_id, receiver_id, message)
-       VALUES ($1, $2, $3)
-       RETURNING id, created_at, is_read`,
+            `INSERT INTO messages (sender_id, receiver_id, message, created_at)
+     VALUES ($1, $2, $3, NOW())
+     RETURNING id, created_at, is_read`,
             [senderId, recvId, message]
         );
 
@@ -696,28 +696,25 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
 
 // Начало копи
 app.post('/api/listen', authenticate, async (req, res) => {
+    console.log('Request data:', req.body);
     const { player_id, json_filename } = req.body;
-    console.log('Request data:', { player_id, json_filename }); // Добавьте в начало обработчика
+
     if (!player_id || !json_filename) {
         return res.status(400).json({
             success: false,
             error: 'player_id and json_filename are required'
         });
     }
+
     try {
-        console.log("Маму ебал этого сервера");
         await virtualWorldPool.query(`
-    INSERT INTO json_listened (player_id, json_filename)
-    VALUES ($1, $2)
-`, [player_id, json_filename]);
+            INSERT INTO json_listened (player_id, json_filename, listened_at)
+            VALUES ($1, $2, NOW())
+        `, [player_id, json_filename]);
 
         res.status(200).json({ success: true });
     } catch (err) {
-        console.error('Full DB error:', {
-            message: err.message,
-            stack: err.stack,
-            query: err.query // Если поддерживается вашим драйвером БД
-        });
+        console.error('Full DB error:', err);
         res.status(500).json({
             success: false,
             error: 'Database operation failed',
