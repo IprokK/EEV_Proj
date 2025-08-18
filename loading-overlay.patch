@@ -1,0 +1,150 @@
+diff --git a/src/Game.js b/src/Game.js
+--- a/src/Game.js
++++ b/src/Game.js
+@@ -28,9 +28,12 @@ function Game({ avatarUrl, gender }) {
+   // 2) реф для группы «города»
+   const cityGroupRef = useRef(null);
+ 
+   // 3) реф для группы «интерьера»
+   const interiorGroupRef = useRef(null);
+-    const cleanupTimerRef = useRef(null);
++    const cleanupTimerRef = useRef(null);
++  // Глобальный менеджер прогресса загрузки (используем в GLTFLoader)
++  const loadingManagerRef = useRef(null);
++  
+   // камеры
+   const orthoCamRef = useRef(null);
+   const fpCamRef = useRef(null);
+   const cameraRef = useRef(null);
+   const rendererRef = useRef(null);
+@@ -347,6 +350,7 @@ function Game({ avatarUrl, gender }) {
+     }));
+   }, []);
+ 
+   //Телефон
++
+     const scene = new THREE.Scene();
+     const playerRef = useRef(null);
+     const cityMeshesRef = useRef([]);
+     const cityObjectsDataRef = useRef([]);
+     const loadedCityObjectsRef = useRef({});
+@@ -744,6 +748,59 @@ function Game({ avatarUrl, gender }) {
+     if (!mount) {
+       console.log('[DEBUG] mountRef.current не определён!');
+       return;
+     }
+ 
++    // ─────────────────────────────────────────────
++    // Красивый загрузочный оверлей + LoadingManager
++    // ─────────────────────────────────────────────
++    let overlayEl = null, barEl = null, textEl = null;
++    function createLoadingOverlay() {
++      if (overlayEl) return;
++      overlayEl = document.createElement('div');
++      Object.assign(overlayEl.style, {
++        position: 'fixed', inset: '0', zIndex: 2000,
++        display: 'flex', flexDirection: 'column',
++        alignItems: 'center', justifyContent: 'center',
++        background: 'linear-gradient(135deg,#0f172a,#1e293b)',
++        color: '#fff', fontFamily: 'system-ui, Arial, sans-serif'
++      });
++      textEl = document.createElement('div');
++      Object.assign(textEl.style, {
++        fontSize: '24px', fontWeight: 700, opacity: 0.9, marginBottom: '16px'
++      });
++      textEl.textContent = 'Загрузка ресурсов...';
++      overlayEl.appendChild(textEl);
++      const barWrap = document.createElement('div');
++      Object.assign(barWrap.style, {
++        width: '320px', height: '10px',
++        background: 'rgba(255,255,255,0.15)',
++        borderRadius: '999px', overflow: 'hidden',
++        boxShadow: '0 6px 20px rgba(0,0,0,0.35)'
++      });
++      barEl = document.createElement('div');
++      Object.assign(barEl.style, {
++        width: '0%', height: '100%',
++        transition: 'width .15s ease',
++        background: 'linear-gradient(90deg,#22d3ee,#38bdf8,#60a5fa)'
++      });
++      barWrap.appendChild(barEl);
++      overlayEl.appendChild(barWrap);
++      const pct = document.createElement('div');
++      Object.assign(pct.style, { marginTop: '12px', fontSize: '14px', opacity: 0.8 });
++      pct.id = 'loadingPct';
++      pct.textContent = '0%';
++      overlayEl.appendChild(pct);
++      document.body.appendChild(overlayEl);
++    }
++    function updateLoadingOverlay(percent, text) {
++      if (!overlayEl) return;
++      const p = Math.max(0, Math.min(100, Math.round(percent || 0)));
++      if (barEl) barEl.style.width = p + '%';
++      const pct = overlayEl.querySelector('#loadingPct');
++      if (pct) pct.textContent = p + '%';
++      if (text && textEl) textEl.textContent = text;
++    }
++    function removeLoadingOverlay() {
++      if (!overlayEl) return;
++      overlayEl.style.transition = 'opacity .2s ease';
++      overlayEl.style.opacity = '0';
++      setTimeout(() => {
++        overlayEl && overlayEl.remove();
++        overlayEl = barEl = textEl = null;
++      }, 220);
++    }
++    // Общий менеджер загрузки (для GLTF/Texture и т.п.)
++    const loadingManager = new THREE.LoadingManager();
++    loadingManagerRef.current = loadingManager;
++    loadingManager.onStart = (_url, loaded, total) => {
++      createLoadingOverlay();
++      updateLoadingOverlay(total ? (loaded / total) * 100 : 5, 'Загрузка ресурсов...');
++    };
++    loadingManager.onProgress = (_url, loaded, total) => {
++      updateLoadingOverlay(total ? (loaded / total) * 100 : 50);
++    };
++    loadingManager.onLoad = () => {
++      updateLoadingOverlay(100, 'Инициализация сцены...');
++      setTimeout(removeLoadingOverlay, 150);
++    };
++
+     console.log('–– useEffect начало');
+ 
+     const baseOffset = new THREE.Vector3(-200, 150, -200);
+     const planarDist = Math.hypot(baseOffset.x, baseOffset.z);
+     const radius = Math.hypot(planarDist, baseOffset.y);
+@@ -825,8 +882,9 @@ function Game({ avatarUrl, gender }) {
+     socket.on('economy:inventory', setInventory);
+     socket.on('gameTime:update', ({ time }) => setGameTime(time));
+-    const gltfLoader = new GLTFLoader();
+-    const animLoader = new GLTFLoader();
++    // Лоадеры, учитывающиеся в прогрессе через loadingManagerRef
++    const gltfLoader = new GLTFLoader(loadingManagerRef.current || undefined);
++    const animLoader = new GLTFLoader(loadingManagerRef.current || undefined);
+ 
+     async function loadPlayerModel(avatarUrl) {
+       return new Promise((resolve, reject) => {
+         gltfLoader.load(avatarUrl, (gltf) => {
+           if (!gltf.scene) return reject('GLTF.scene отсутствует');
+@@ -1168,6 +1226,18 @@ function Game({ avatarUrl, gender }) {
+       setSelectedHouse(null);
+     }
+ 
++    // Мини-лоадер при загрузке интерьеров (обёртка поверх loadInteriorScene)
++    const _origLoadInteriorScene = loadInteriorScene;
++    loadInteriorScene = async (interiorId) => {
++      try {
++        // показываем мини-оверлей на время подзагрузки интерьера
++        createLoadingOverlay();
++        updateLoadingOverlay(30, 'Загрузка интерьера...');
++        await _origLoadInteriorScene(interiorId);
++      } finally {
++        setTimeout(removeLoadingOverlay, 120);
++      }
++    };
++
+     function onMouseWheel(e) {
+       e.preventDefault();
+       const delta = -e.deltaY * 0.001;
+ 
+       if (e.ctrlKey) {

@@ -22,9 +22,48 @@ function Game({ avatarUrl, gender }) {
   // 2) реф для группы «города»
   const cityGroupRef = useRef(null);
 
+    /**
+   * Безопасно получает .current у рефа. Если сам ref == null ИЛИ ref.current == null,
+   * вернёт null и залогирует понятную причину.
+   */
+  function getRef(ref, name = 'ref') {
+    if (ref === null) {
+      console.error(`[REF] ${name} variable is null (handler called before init?)`);
+      return null;
+    }
+    if (typeof ref !== 'object' || !('current' in ref)) {
+      console.error(`[REF] ${name} is not a ref-like object`);
+      return null;
+    }
+    if (ref.current == null) {
+      console.warn(`[REF] ${name}.current is not ready yet`);
+      return null;
+    }
+    return ref.current;
+  }
+
+  /**
+   * Удобные однотипные геттеры — сокращают повтор.
+  */
+  const getScene  = () => getRef(sceneRef, 'sceneRef');
+  const getPlayer = () => getRef(playerRef, 'playerRef');
+  const getCityGroup = () => getRef(cityGroupRef, 'cityGroupRef');
+  const getExitMarker = () => getRef(exitMarkerRef, 'exitMarkerRef');
+
+  /**
+   * Быстрые проверки перед действиями, требующими инициализации 3D.
+   */
+  const ensureSceneAndPlayer = () => !!(getScene() && getPlayer());
+
+
   // 3) реф для группы «интерьера»
   const interiorGroupRef = useRef(null);
-    const cleanupTimerRef = useRef(null);
+  const cleanupTimerRef = useRef(null);
+  // Глобальный менеджер прогресса загрузки (используем в GLTFLoader)
+  const loadingManagerRef = useRef(null);
+  // Кликабельные объекты внутри интерьера
+  const interiorInteractablesRef = useRef([]);
+
   // камеры
   const orthoCamRef = useRef(null);
   const fpCamRef = useRef(null);
@@ -40,8 +79,7 @@ function Game({ avatarUrl, gender }) {
 
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
-  const [interiorGroup, setInteriorGroup] = useState(null);
-  const mountRef = useRef(null);
+  const [mountRef, setMountRef] = useState(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -104,6 +142,8 @@ function Game({ avatarUrl, gender }) {
     const [isChatVisible, setIsChatVisible] = useState(true);
 
     const [seregaComments, setSeregaComments] = useState([]);
+    const [currentExit, setCurrentExit] = useState(null);
+
   useEffect(() => {
     const decay = setInterval(() => {
       setSatiety(s => Math.max(0, s - 0.05));
@@ -517,7 +557,12 @@ function Game({ avatarUrl, gender }) {
       const glbUrl = baseUrl + glb;
       console.log('Loading GLB from', glbUrl);
 
+      // подстраховка: перед загрузкой проверяем, что URL физически отдает не HTML
+      const headResp = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
+      if (!headResp.ok) throw new Error(`GLB not reachable: HTTP ${headResp.status}`);
       const gltf = await loadGLTF(glbUrl);
+
+
 
       const scene = sceneRef.current;
       savedPositionRef.current.copy(playerRef.current.position);
@@ -527,6 +572,8 @@ function Game({ avatarUrl, gender }) {
       const intGroup = new THREE.Group();
       intGroup.name = 'interiorGroup';
       intGroup.add(gltf.scene);
+
+      interiorInteractablesRef.current = []; // сбрасываем реестр интерактива
 
       for (const o of objects) {
         if (o.model_url) {
@@ -544,8 +591,25 @@ function Game({ avatarUrl, gender }) {
           mesh.position.set(o.x, o.y, o.z);
           mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
           mesh.scale.set(o.scale, o.scale, o.scale);
-          intGroup.add(mesh);
-        }
+            // по умолчанию делаем «чистую» геометрию…
+            intGroup.add(mesh);
+          }
+          // Если сервер прислал «маркер»/NPC — пометим кликабельным
+          // (ожидаем флаг o.interactable и/или o.marker === true)
+          if (o.interactable || o.marker) {
+            // добавим небольшой «хитбокс» для клика
+            const hit = new THREE.Mesh(
+              new THREE.SphereGeometry(0.6),
+              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, depthWrite: false })
+            );
+            hit.position.set(o.x, o.y + 1.0, o.z);
+            hit.userData.interactable = true;
+            hit.userData.payload = { type: o.type || 'marker', id: o.id || null, label: o.label || 'Интерактив' };
+            // не даем этому спрайту мешать внешним лучам
+            hit.raycast = hit.raycast; // оставим по умолчанию; это НЕ Sprite
+            intGroup.add(hit);
+            interiorInteractablesRef.current.push(hit);
+          }
       }
 
       const light = new THREE.AmbientLight(0xffffff, 1);
@@ -553,46 +617,122 @@ function Game({ avatarUrl, gender }) {
 
       scene.add(intGroup);
       interiorGroupRef.current = intGroup;
-      setInteriorGroup(intGroup);
-      playerRef.current.position.set(0, 0, 0);
-      playerRef.current.quaternion.identity();
-      switchToFirstPersonCamera();
       setIsInInterior(true);
       setSelectedHouse(null);
     }
-    const enterInterior = async (houseId) => {
+    const enterInterior = async (interiorId) => {
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Пожалуйста, войдите в систему, чтобы войти в здание');
         return;
       }
+
+      // Сцена/игрок должны быть инициализированы
+      if (!ensureSceneAndPlayer()) return;
+      const scene  = getScene();
+      const player = getPlayer();
+
       try {
-        const res = await fetch(
-          `/api/city_objects/${houseId}/interior`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            credentials: 'include',
-            cache: 'no-cache'
-          }
-        );
+        const res = await fetch(`/api/interiors/${interiorId}/enter`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          cache: 'no-cache'
+        });
         if (!res.ok) {
           const errText = await res.text();
-          console.error(`Ошибка ${res.status} при получении interior_id: ${errText}`);
-          alert(`Не удалось получить данные интерьера: ${errText}`);
+          console.error(`Ошибка ${res.status} при получении spawn-координат: ${errText}`);
+          alert(`Не удалось получить координаты интерьера: ${errText}`);
           return;
         }
-        let { interiorId } = await res.json();
-
-        if (!interiorId || interiorId < 1) {
-          alert('Для этого здания не задан интерьер');
+        const data = await res.json();
+        const { spawn, exit, cityId } = data;
+        // Если интерьер в другом городе — переключаем город
+        const profile0 = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        const myCityId0 = profile0.last_city_id || 1;
+        if (cityId && cityId !== myCityId0) {
+          socketRef.current?.emit('cityChange', { cityId });
+          profile0.last_city_id = cityId;
+          sessionStorage.setItem('user_profile', JSON.stringify(profile0));
+        }
+        if (!spawn) {
+          alert('Для этого интерьера не заданы координаты входа');
           return;
         }
-
-        await loadInteriorScene(interiorId);
+        // Телепортируем игрока в интерьер
+        
+        // Телепорт игрока
+        player.position.set(spawn.x, spawn.y, spawn.z);
+        player.rotation.y = THREE.MathUtils.degToRad(spawn.rot);
+        // Можно добавить сброс скорости, анимации и т.д. при необходимости
+        
+        setCurrentExit(exit || null);
+        // Добавляем маркер выхода
+        if (exit) {
+          addExitMarker(exit);
+        }
       } catch (e) {
         console.error('Failed to enter interior:', e);
       }
     };
+
+    function addExitMarker(exit) {
+      // Удаляем старый маркер, если был
+      if (window.exitMarkerMesh && sceneRef.current) {
+        sceneRef.current.remove(window.exitMarkerMesh);
+        window.exitMarkerMesh = null;
+      }
+      // Создаём маркер выхода
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.5),
+        new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.5 })
+      );
+      marker.position.set(exit.x, exit.y, exit.z);
+      marker.userData.isExitMarker = true;
+      if (sceneRef.current) sceneRef.current.add(marker);
+      window.exitMarkerMesh = marker;
+    }
+
+    const exitInterior = () => {
+      if (!currentExit) {
+        alert('Не заданы координаты выхода из интерьера!');
+        return;
+      }
+      if (playerRef.current) {
+        playerRef.current.position.set(currentExit.x, currentExit.y, currentExit.z);
+        playerRef.current.rotation.set(0, currentExit.rot || 0, 0);
+      }
+      // Удаляем маркер выхода
+      if (window.exitMarkerMesh && sceneRef.current) {
+        sceneRef.current.remove(window.exitMarkerMesh);
+        window.exitMarkerMesh = null;
+      }
+      setCurrentExit(null);
+    };
+
+    // В useEffect для кликов по сцене:
+    useEffect(() => {
+      function onDocumentClick(event) {
+        if (!rendererRef.current || !cameraRef.current) return;
+        const rect = rendererRef.current.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, cameraRef.current);
+        const intersects = raycaster.intersectObjects(sceneRef.current.children, true);
+        for (let i = 0; i < intersects.length; i++) {
+          const obj = intersects[i].object;
+          if (obj.userData.isExitMarker) {
+            exitInterior();
+            break;
+          }
+        }
+      }
+      window.addEventListener('mousedown', onDocumentClick);
+      return () => window.removeEventListener('mousedown', onDocumentClick);
+    }, [currentExit]);
 
     /*const handleAnswerSelect = (answer) => {
         if (answer.end) {
@@ -954,7 +1094,7 @@ function Game({ avatarUrl, gender }) {
 
 
 async function movePlayerToInterior(interiorId) {
-  await loadInteriorScene(interiorId);
+  await enterInterior(interiorId);
 }
 
 function switchToFirstPersonCamera() {
@@ -984,6 +1124,50 @@ function startMove(dir) {
 function stopMove(dir) {
   moveInputRef.current[dir] = false;
 }
+
+
+// ─────────────────────────────────────────────────────
+// КЛИКИ ВНУТРИ ИНТЕРЬЕРА (интерактивные маркеры/NPC)
+// ─────────────────────────────────────────────────────
+useEffect(() => {
+  const onClick = (e) => {
+    if (!isInInteriorRef.current) return;
+    const mount = mountRef.current;
+    if (!mount || !cameraRef.current) return;
+
+    // координаты мыши в NDC
+    const rect = mount.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, cameraRef.current);
+    // Ищем пересечения по интерактивам
+    const objects = interiorInteractablesRef.current.filter(obj => obj?.isObject3D);
+    if (!objects.length) return;
+    const hits = raycaster.intersectObjects(objects, true)
+     .filter(h => h.object && h.object.userData && h.object.userData.interactable);
+    if (!hits.length) return;
+
+      const top = hits[0].object;
+      const payload = top.userData.payload || {};
+      // Дальше делай что нужно: диалог, меню, действие и т.п.
+      if (payload.type === 'marker') {
+        console.log('Нажат маркер:', payload);
+        // например, открыть окно диалога/описания
+        // setCurrentDialog(...); setShowDialog(true);
+      } else if (payload.type === 'npc') {
+        console.log('Нажат NPC:', payload);
+      // loadDialog(payload.id) и т.п.
+      } else {
+        console.log('Интерактив:', payload);
+      }
+    };
+
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, []);
 
   async function buyItem(key) {
     if (!orgMenu) return;
@@ -1030,67 +1214,6 @@ function stopMove(dir) {
     });
   }
 
-  function createInterior() {
-    const group = new THREE.Group();
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    group.add(floor);
-
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
-    const wallGeo = new THREE.PlaneGeometry(20, 10);
-    const back = new THREE.Mesh(wallGeo, wallMat);
-    back.position.set(0, 5, -10);
-    group.add(back);
-    const front = back.clone();
-    front.position.set(0, 5, 10);
-    front.rotation.y = Math.PI;
-    group.add(front);
-    const left = back.clone();
-    left.position.set(-10, 5, 0);
-    left.rotation.y = Math.PI / 2;
-    group.add(left);
-    const right = back.clone();
-    right.position.set(10, 5, 0);
-    right.rotation.y = -Math.PI / 2;
-    group.add(right);
-
-    const light = new THREE.PointLight(0xffffff, 1);
-    light.position.set(0, 5, 0);
-    group.add(light);
-
-    return group;
-  }
-
-  function enterHouse(house) {
-    if (!house || !sceneRef.current || !playerRef.current) return;
-    const id = parseInt(house.id, 10);
-    if (id === 9) {
-      savedPositionRef.current.copy(playerRef.current.position);
-      toggleWorldVisibility(false);
-      interiorGroupRef.current = createInterior();
-      sceneRef.current.add(interiorGroupRef.current);
-      playerRef.current.position.set(0, 0, 0);
-      playerRef.current.quaternion.identity();
-      setSelectedHouse(null);
-      switchToFirstPersonCamera();
-      setIsInInterior(true);
-    }
-  }
-
-  function exitInterior() {
-    if (!isInInterior || !playerRef.current) return;
-    sceneRef.current.remove(interiorGroupRef.current);
-    interiorGroupRef.current = null;
-    setInteriorGroup(null);
-    toggleWorldVisibility(true);
-    sceneRef.current.add(cityGroupRef.current);
-    playerRef.current.position.copy(savedPositionRef.current);
-    switchToThirdPersonCamera();
-    setIsInInterior(false);
-    updateCityObjectVisibility();
-  }
-
   useEffect(() => {
     console.log('[DEBUG] useEffect вызван');
     const mount = mountRef.current;
@@ -1098,6 +1221,81 @@ function stopMove(dir) {
       console.log('[DEBUG] mountRef.current не определён!');
       return;
     }
+
+    // ─────────────────────────────────────────────
+    // Красивый загрузочный оверлей + LoadingManager
+    // ─────────────────────────────────────────────
+    let overlayEl = null, barEl = null, textEl = null;
+    function createLoadingOverlay() {
+      if (overlayEl) return;
+      overlayEl = document.createElement('div');
+      Object.assign(overlayEl.style, {
+        position: 'fixed', inset: '0', zIndex: 2000,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(135deg,#0f172a,#1e293b)',
+        color: '#fff', fontFamily: 'system-ui, Arial, sans-serif'
+      });
+      textEl = document.createElement('div');
+      Object.assign(textEl.style, {
+        fontSize: '24px', fontWeight: 700, opacity: 0.9, marginBottom: '16px'
+      });
+      textEl.textContent = 'Загрузка ресурсов...';
+      overlayEl.appendChild(textEl);
+      const barWrap = document.createElement('div');
+      Object.assign(barWrap.style, {
+        width: '320px', height: '10px',
+        background: 'rgba(255,255,255,0.15)',
+        borderRadius: '999px', overflow: 'hidden',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.35)'
+      });
+      barEl = document.createElement('div');
+      Object.assign(barEl.style, {
+        width: '0%', height: '100%',
+        transition: 'width .15s ease',
+        background: 'linear-gradient(90deg,#22d3ee,#38bdf8,#60a5fa)'
+      });
+      barWrap.appendChild(barEl);
+      overlayEl.appendChild(barWrap);
+      const pct = document.createElement('div');
+      Object.assign(pct.style, { marginTop: '12px', fontSize: '14px', opacity: 0.8 });
+      pct.id = 'loadingPct';
+      pct.textContent = '0%';
+      overlayEl.appendChild(pct);
+      document.body.appendChild(overlayEl);
+    }
+    function updateLoadingOverlay(percent, text) {
+      if (!overlayEl) return;
+      const p = Math.max(0, Math.min(100, Math.round(percent || 0)));
+      if (barEl) barEl.style.width = p + '%';
+      const pct = overlayEl.querySelector('#loadingPct');
+      if (pct) pct.textContent = p + '%';
+      if (text && textEl) textEl.textContent = text;
+    }
+    function removeLoadingOverlay() {
+      if (!overlayEl) return;
+      overlayEl.style.transition = 'opacity .2s ease';
+      overlayEl.style.opacity = '0';
+      setTimeout(() => {
+        overlayEl && overlayEl.remove();
+        overlayEl = barEl = textEl = null;
+      }, 220);
+    }
+    // Общий менеджер загрузки (для GLTF/Texture и т.п.)
+    const loadingManager = new THREE.LoadingManager();
+    loadingManagerRef.current = loadingManager;
+    loadingManager.onStart = (_url, loaded, total) => {
+      createLoadingOverlay();
+      updateLoadingOverlay(total ? (loaded / total) * 100 : 5, 'Загрузка ресурсов...');
+    };
+    loadingManager.onProgress = (_url, loaded, total) => {
+      updateLoadingOverlay(total ? (loaded / total) * 100 : 50);
+    };
+    loadingManager.onLoad = () => {
+      updateLoadingOverlay(100, 'Инициализация сцены...');
+      setTimeout(removeLoadingOverlay, 150);
+    };
+    
 
     console.log('–– useEffect начало');
 
@@ -1168,8 +1366,9 @@ function stopMove(dir) {
     socket.emit('economy:getInventory', { userId: profile.id });
     socket.on('economy:inventory', setInventory);
     socket.on('gameTime:update', ({ time }) => setGameTime(time));
-    const gltfLoader = new GLTFLoader();
-    const animLoader = new GLTFLoader();
+    // Лоадеры, учитывающиеся в прогрессе через loadingManagerRef
+    const gltfLoader = new GLTFLoader(loadingManagerRef.current || undefined);
+    const animLoader = new GLTFLoader(loadingManagerRef.current || undefined);
 
     async function loadPlayerModel(avatarUrl) {
       return new Promise((resolve, reject) => {
@@ -1602,6 +1801,20 @@ function stopMove(dir) {
       cleanupVoiceConnection(id);
     });
 
+
+    // Мини-лоадер при загрузке интерьеров (обёртка поверх loadInteriorScene)
+    const _origLoadInteriorScene = loadInteriorScene;
+    loadInteriorScene = async (interiorId) => {
+      try {
+        // показываем мини-оверлей на время подзагрузки интерьера
+        createLoadingOverlay();
+        updateLoadingOverlay(30, 'Загрузка интерьера...');
+        await _origLoadInteriorScene(interiorId);
+      } finally {
+        setTimeout(removeLoadingOverlay, 120);
+      }
+    };
+
     function onMouseWheel(e) {
       e.preventDefault();
       const delta = -e.deltaY * 0.001;
@@ -1792,12 +2005,15 @@ function stopMove(dir) {
         scene.add(player);
         playerRef.current = player;
         player.scale.set(1, 1, 1);
-        player.position.set(0, 0, 0);
+        const profPos = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        const startX = Number(profPos.last_pos_x ?? 0);
+        const startZ = Number(profPos.last_pos_z ?? 0);
+        player.position.set(startX, 0, startZ);
 
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
 
-        mountRef.current = myName;
+        setMountRef(myName);
 
         const nameLabel = createPlayerLabel(myName);
         nameLabel.position.set(0, 2.2, 0);
@@ -2720,7 +2936,7 @@ function stopMove(dir) {
             <b>Налог:</b> {selectedHouse.tax}
           </p>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button onClick={() => enterHouse(selectedHouse)} style={btnStyle}>Войти</button>
+          <button onClick={() => enterInterior(selectedHouse.id)} style={btnStyle}>Войти</button>
             <button onClick={() => viewStats(selectedHouse)} style={btnStyle}>Статистика</button>
             {selectedHouse.organizationId && (
               <>

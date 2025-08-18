@@ -1,38 +1,55 @@
-require('dotenv').config();
-const express = require('express');
-const db = require('./db');
-const Economy = require('./economy');
-const GameTime = require('./gameTime');
-const path = require('path');
-const fs = require('fs');
-const app = express();
-const organizationsRouter = require('./server/organizations');
-
-const { virtualWorldPool } = require('./db1');
-
-async function ensureMessagesTable() {
-  try {
-    await virtualWorldPool.query(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id SERIAL PRIMARY KEY,
-        sender_id INTEGER NOT NULL,
-        receiver_id INTEGER NOT NULL,
-        message TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        is_read BOOLEAN DEFAULT FALSE
-      )
-    `);
-  } catch (e) {
-    console.error('Ошибка создания таблицы messages', e);
-  }
+let dotenv, express, db, Economy, GameTime, pathLib, fs, virtualWorldPool;
+try {
+  dotenv = require('dotenv').config();
+  console.log('dotenv успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте dotenv:', e);
+  throw e;
+}
+try {
+  express = require('express');
+  console.log('express успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте express:', e);
+  throw e;
+}
+try {
+  db = require('./db');
+  console.log('db успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте db:', e);
+  throw e;
+}
+try {
+  Economy = require('./economy');
+  console.log('Economy успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте economy:', e);
+  throw e;
+}
+try {
+  GameTime = require('./gameTime');
+  console.log('GameTime успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте gameTime:', e);
+  throw e;
+}
+try {
+  pathLib = require('path');
+  console.log('path успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте path:', e);
+  throw e;
+}
+try {
+  fs = require('fs');
+  console.log('fs успешно импортирован');
+} catch (e) {
+  console.error('Ошибка при импорте fs:', e);
+  throw e;
 }
 
-ensureMessagesTable();
-
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use('/api/organizations', organizationsRouter);
+const app = express();
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -47,10 +64,11 @@ const io = require('socket.io')(http, {
     methods: ['GET', 'POST']
   }
 });
-const economy = new Economy(io, db);
-const gameTime = new GameTime(io, 8);
 
-let onlineUsers = {};   
+let onlineUsers = {};
+
+const organizationsRouter = require('./server/organizations')(io, onlineUsers);
+app.use('/api/organizations', organizationsRouter);
 
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
@@ -58,7 +76,7 @@ io.use((socket, next) => {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     socket.userId = payload.id;
-    onlineUsers[socket.userId] = socket.id; // Добавить пользователя в онлайн  
+    onlineUsers[socket.userId] = socket.id; // Добавить пользователя в онлайн
     next();
   } catch (err) {
     next(new Error('Invalid token'));
@@ -80,10 +98,10 @@ function authenticate(req, res, next) {
   }
 }
 
-app.use(express.static(path.join(__dirname, 'build')));
+app.use(express.static(pathLib.join(__dirname, 'build')));
 app.use(
   '/models',
-  express.static(path.join(__dirname, 'public', 'models'))
+  express.static(pathLib.join(__dirname, 'public', 'models'))
 );
 
 let players = {};
@@ -538,7 +556,10 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
       stress_level  AS "stressLevel",
       satiety,
       thirst,
-      diseases
+      diseases,
+      last_city_id  AS "last_city_id",
+      last_pos_x    AS "last_pos_x",
+      last_pos_z    AS "last_pos_z"
      FROM users
      WHERE id = $1
    `, [dbId]);
@@ -634,7 +655,7 @@ app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
 // Получить список доступных моделей из public/models/copied
 app.get('/api/models', authenticate, async (req, res) => {
   try {
-    const dir = path.join(__dirname, 'public', 'models', 'copied');
+    const dir = pathLib.join(__dirname, 'public', 'models', 'copied');
     const files = await fs.promises.readdir(dir);
     const glbs = files.filter(f => f.toLowerCase().endsWith('.glb'));
     res.json(glbs);
@@ -665,12 +686,42 @@ app.get(
   }
 );
 
+// Новый эндпоинт для входа в интерьер:
+app.post('/api/interiors/:interiorId/enter', authenticate, async (req, res) => {
+  const interiorId = parseInt(req.params.interiorId, 10);
+  try {
+    const interior = (await db.query(
+      'SELECT city_id, spawn_x, spawn_y, spawn_z, spawn_rot, exit_x, exit_y, exit_z, exit_rot FROM interiors WHERE id = $1',
+        [interiorId]
+      )).rows[0];
+    if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
+    res.json({
+      cityId: interior.city_id || 1,
+      spawn: {
+        x: interior.spawn_x,
+        y: interior.spawn_y,
+        z: interior.spawn_z,
+        rot: interior.spawn_rot
+      },
+      exit: {
+        x: interior.exit_x,
+        y: interior.exit_y,
+        z: interior.exit_z,
+        rot: interior.exit_rot
+      }, 
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Не удалось получить координаты интерьера' });
+  }
+});
+
 // server.js, после маршрута /api/city_objects/:objectId/interior
 app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) => {
   const interiorId = parseInt(req.params.interiorId, 10);
   try {
     const interior = (await db.query(
-      'SELECT glb_filename, pos_x, pos_y, pos_z FROM interiors WHERE id = $1',
+      'SELECT glb_filename, pos_x, pos_y, pos_z, spawn_x, spawn_y, spawn_z, spawn_rot FROM interiors WHERE id = $1',
       [interiorId]
     )).rows[0];
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
@@ -686,6 +737,7 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
     res.json({
       glb: `/models/interiors/${interior.glb_filename}`,
       position: { x: interior.pos_x, y: interior.pos_y, z: interior.pos_z },
+      spawn: { x: interior.spawn_x, y: interior.spawn_y, z: interior.spawn_z, rot: interior.spawn_rot },
       objects
     });
   } catch (e) {
@@ -1113,10 +1165,10 @@ app.post('/api/save-map', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Invalid objects' });
   }
   try {
-    const dir = path.join(__dirname, 'saves');
+    const dir = pathLib.join(__dirname, 'saves');
     await fs.promises.mkdir(dir, { recursive: true });
     const file = `city_${cityId}_${Date.now()}.txt`;
-    const filePath = path.join(dir, file);
+    const filePath = pathLib.join(dir, file);
     await fs.promises.writeFile(
       filePath,
       JSON.stringify({ objects, removedIds }, null, 2),
@@ -1145,10 +1197,40 @@ app.get('/api/cities', authenticate, async (req, res) => {
 });
 
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  res.sendFile(pathLib.join(__dirname, 'build', 'index.html'));
 });
 
 const PORT = process.env.PORT || 4000;
 http.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+// Логирование всех маршрутов и middleware
+['get', 'post', 'put', 'delete', 'use'].forEach(method => {
+  const orig = app[method];
+  app[method] = function(path, ...args) {
+    if (typeof path === 'string') {
+      console.log(`Регистрируется ${method.toUpperCase()} маршрут:`, path);
+    } else if (typeof path === 'function') {
+      console.log(`Регистрируется middleware (без пути) через ${method}`);
+    }
+    return orig.call(this, path, ...args);
+  };
+});
+
+// После ensureMessagesTable();
+async function ensureInteriorsSpawnColumns() {
+  try {
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS spawn_x NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS spawn_y NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS spawn_z NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS spawn_rot NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS exit_x NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS exit_y NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS exit_z NUMERIC DEFAULT 0');
+    await db.query('ALTER TABLE interiors ADD COLUMN IF NOT EXISTS exit_rot NUMERIC DEFAULT 0');
+  } catch (e) {
+    console.error('Ошибка добавления spawn/exit-колонок в interiors', e);
+  }
+}
+ensureInteriorsSpawnColumns();
