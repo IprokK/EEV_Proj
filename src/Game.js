@@ -79,7 +79,8 @@ function Game({ avatarUrl, gender }) {
 
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
-  const [mountRef, setMountRef] = useState(null);
+  const mountRef = useRef(null);
+  const [playerName, setPlayerName] = useState('');
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -2013,7 +2014,7 @@ useEffect(() => {
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
 
-        setMountRef(myName);
+        setPlayerName(myName);
 
         const nameLabel = createPlayerLabel(myName);
         nameLabel.position.set(0, 2.2, 0);
@@ -3999,10 +4000,10 @@ useEffect(() => {
                           if (e.key === 'Enter') {
                               const msg = e.target.value.trim();
                               if (msg) {
-                                  socketRef.current?.emit('chatMessage', {
-                                      message: msg,
-                                      name: mountRef.current
-                                  });
+                                    socketRef.current?.emit('chatMessage', {
+                                        message: msg,
+                                        name: playerName
+                                    });
                                   console.log('отправил', msg);
                                   e.target.value = '';
                               }
