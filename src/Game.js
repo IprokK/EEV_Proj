@@ -22,40 +22,6 @@ function Game({ avatarUrl, gender }) {
   // 2) реф для группы «города»
   const cityGroupRef = useRef(null);
 
-    /**
-   * Безопасно получает .current у рефа. Если сам ref == null ИЛИ ref.current == null,
-   * вернёт null и залогирует понятную причину.
-   */
-  function getRef(ref, name = 'ref') {
-    if (ref === null) {
-      console.error(`[REF] ${name} variable is null (handler called before init?)`);
-      return null;
-    }
-    if (typeof ref !== 'object' || !('current' in ref)) {
-      console.error(`[REF] ${name} is not a ref-like object`);
-      return null;
-    }
-    if (ref.current == null) {
-      console.warn(`[REF] ${name}.current is not ready yet`);
-      return null;
-    }
-    return ref.current;
-  }
-
-  /**
-   * Удобные однотипные геттеры — сокращают повтор.
-  */
-  const getScene  = () => getRef(sceneRef, 'sceneRef');
-  const getPlayer = () => getRef(playerRef, 'playerRef');
-  const getCityGroup = () => getRef(cityGroupRef, 'cityGroupRef');
-  const getExitMarker = () => getRef(exitMarkerRef, 'exitMarkerRef');
-
-  /**
-   * Быстрые проверки перед действиями, требующими инициализации 3D.
-   */
-  const ensureSceneAndPlayer = () => !!(getScene() && getPlayer());
-
-
   // 3) реф для группы «интерьера»
   const interiorGroupRef = useRef(null);
   const cleanupTimerRef = useRef(null);
@@ -79,7 +45,7 @@ function Game({ avatarUrl, gender }) {
 
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
-  const [mountRef, setMountRef] = useState(null);
+  const mountRef = useRef(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -626,12 +592,6 @@ function Game({ avatarUrl, gender }) {
         alert('Пожалуйста, войдите в систему, чтобы войти в здание');
         return;
       }
-
-      // Сцена/игрок должны быть инициализированы
-      if (!ensureSceneAndPlayer()) return;
-      const scene  = getScene();
-      const player = getPlayer();
-
       try {
         const res = await fetch(`/api/interiors/${interiorId}/enter`, {
           method: 'POST',
@@ -645,27 +605,17 @@ function Game({ avatarUrl, gender }) {
           alert(`Не удалось получить координаты интерьера: ${errText}`);
           return;
         }
-        const data = await res.json();
-        const { spawn, exit, cityId } = data;
-        // Если интерьер в другом городе — переключаем город
-        const profile0 = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const myCityId0 = profile0.last_city_id || 1;
-        if (cityId && cityId !== myCityId0) {
-          socketRef.current?.emit('cityChange', { cityId });
-          profile0.last_city_id = cityId;
-          sessionStorage.setItem('user_profile', JSON.stringify(profile0));
-        }
+        const { spawn, exit } = await res.json();
         if (!spawn) {
           alert('Для этого интерьера не заданы координаты входа');
           return;
         }
         // Телепортируем игрока в интерьер
-        
-        // Телепорт игрока
-        player.position.set(spawn.x, spawn.y, spawn.z);
-        player.rotation.y = THREE.MathUtils.degToRad(spawn.rot);
-        // Можно добавить сброс скорости, анимации и т.д. при необходимости
-        
+        if (playerRef.current) {
+          playerRef.current.position.set(spawn.x, spawn.y, spawn.z);
+          playerRef.current.rotation.set(0, spawn.rot || 0, 0);
+          // Можно добавить сброс скорости, анимации и т.д. при необходимости
+        }
         setCurrentExit(exit || null);
         // Добавляем маркер выхода
         if (exit) {
@@ -694,21 +644,38 @@ function Game({ avatarUrl, gender }) {
     }
 
     const exitInterior = () => {
-      if (!currentExit) {
-        alert('Не заданы координаты выхода из интерьера!');
-        return;
-      }
-      if (playerRef.current) {
+      // Если сервер прислал координаты выхода — телепортируем игрока
+      if (currentExit && playerRef.current) {
         playerRef.current.position.set(currentExit.x, currentExit.y, currentExit.z);
         playerRef.current.rotation.set(0, currentExit.rot || 0, 0);
       }
-      // Удаляем маркер выхода
+
+      // Удаляем маркер выхода, если был
       if (window.exitMarkerMesh && sceneRef.current) {
         sceneRef.current.remove(window.exitMarkerMesh);
         window.exitMarkerMesh = null;
       }
+
+      // Если у нас создана группа интерьера — убираем её и возвращаем «мир»
+      if (interiorGroupRef.current && sceneRef.current) {
+        sceneRef.current.remove(interiorGroupRef.current);
+        interiorGroupRef.current = null;
+
+        // вернуть видимость мира и группу города
+        toggleWorldVisibility(true);
+        if (cityGroupRef.current) {
+          sceneRef.current.add(cityGroupRef.current);
+        }
+
+        // вернуть третье лицо/камеру и актуализировать видимость объектов города
+        switchToThirdPersonCamera?.();
+        updateCityObjectVisibility?.();
+      }
+
+      setIsInInterior(false);
       setCurrentExit(null);
     };
+
 
     // В useEffect для кликов по сцене:
     useEffect(() => {
@@ -1094,7 +1061,7 @@ function Game({ avatarUrl, gender }) {
 
 
 async function movePlayerToInterior(interiorId) {
-  await enterInterior(interiorId);
+  await loadInteriorScene(interiorId);
 }
 
 function switchToFirstPersonCamera() {
@@ -1212,6 +1179,54 @@ useEffect(() => {
     Object.values(remotePlayersRef.current).forEach(p => {
       if (p.model) p.model.visible = visible;
     });
+  }
+
+  function createInterior() {
+    const group = new THREE.Group();
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    group.add(floor);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
+    const wallGeo = new THREE.PlaneGeometry(20, 10);
+    const back = new THREE.Mesh(wallGeo, wallMat);
+    back.position.set(0, 5, -10);
+    group.add(back);
+    const front = back.clone();
+    front.position.set(0, 5, 10);
+    front.rotation.y = Math.PI;
+    group.add(front);
+    const left = back.clone();
+    left.position.set(-10, 5, 0);
+    left.rotation.y = Math.PI / 2;
+    group.add(left);
+    const right = back.clone();
+    right.position.set(10, 5, 0);
+    right.rotation.y = -Math.PI / 2;
+    group.add(right);
+
+    const light = new THREE.PointLight(0xffffff, 1);
+    light.position.set(0, 5, 0);
+    group.add(light);
+
+    return group;
+  }
+
+  function enterHouse(house) {
+    if (!house || !sceneRef.current || !playerRef.current) return;
+    const id = parseInt(house.id, 10);
+    if (id === 9) {
+      savedPositionRef.current.copy(playerRef.current.position);
+      toggleWorldVisibility(false);
+      interiorGroupRef.current = createInterior();
+      sceneRef.current.add(interiorGroupRef.current);
+      playerRef.current.position.set(0, 0, 0);
+      playerRef.current.quaternion.identity();
+      setSelectedHouse(null);
+      switchToFirstPersonCamera();
+      setIsInInterior(true);
+    }
   }
 
   useEffect(() => {
@@ -2005,10 +2020,7 @@ useEffect(() => {
         scene.add(player);
         playerRef.current = player;
         player.scale.set(1, 1, 1);
-        const profPos = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const startX = Number(profPos.last_pos_x ?? 0);
-        const startZ = Number(profPos.last_pos_z ?? 0);
-        player.position.set(startX, 0, startZ);
+        player.position.set(0, 0, 0);
 
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
@@ -2936,7 +2948,7 @@ useEffect(() => {
             <b>Налог:</b> {selectedHouse.tax}
           </p>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button onClick={() => enterInterior(selectedHouse.id)} style={btnStyle}>Войти</button>
+              <button onClick={() => enterHouse(selectedHouse)} style={btnStyle}>Войти</button>
             <button onClick={() => viewStats(selectedHouse)} style={btnStyle}>Статистика</button>
             {selectedHouse.organizationId && (
               <>
