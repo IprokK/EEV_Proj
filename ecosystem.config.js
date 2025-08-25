@@ -1,17 +1,13 @@
 module.exports = {
   apps: [
     {
-      name: 'threenew-api',
+      name: 'eev-api',
       script: 'server.js',
-      cwd: '/threenew',
-      env: { NODE_ENV: 'production', PORT: 4000 }
-    },
-    {
-      name: 'threenew-web',
-      script: 'serve',
-      cwd: '/threenew',
-      args: '-s build -l 3000',
-      env: { NODE_ENV: 'production' }
+      cwd: '/three/EEV_Proj',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 4000
+      }
     }
   ]
 }

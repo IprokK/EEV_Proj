@@ -4,7 +4,18 @@ try {
   console.log('dotenv успешно импортирован');
 } catch (e) {
   console.error('Ошибка при импорте dotenv:', e);
-  throw e;
+  console.log('Продолжаем без .env файла');
+}
+
+// Устанавливаем fallback значения для критических переменных окружения
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = 'fallback-secret-key-for-development';
+  console.warn('JWT_SECRET не найден, используем fallback ключ (НЕ ДЛЯ ПРОДАКШЕНА!)');
+}
+
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = 'postgresql://postgres:password@localhost:5432/revproj';
+  console.warn('DATABASE_URL не найден, используем fallback (НЕ ДЛЯ ПРОДАКШЕНА!)');
 }
 try {
   express = require('express');
@@ -50,6 +61,10 @@ try {
 }
 
 const app = express();
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
@@ -520,7 +535,25 @@ app.get('/api/me', authenticate, async (req, res) => {
     WHERE id = $1
   `, [userId]);
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
-  res.json(rows[0]);
+  
+  const user = rows[0];
+  
+  // Автоматически исправляем неправильный avatarURL
+  if (!user.avatarURL || user.avatarURL === 'try' || user.avatarURL === 'undefined' || user.avatarURL === 'null') {
+    console.log(`Исправляем неправильный avatarURL для пользователя ${userId}: ${user.avatarURL} -> /models/character.glb`);
+    
+    try {
+      await db.query(
+        'UPDATE users SET avatar_url = $1 WHERE id = $2',
+        ['/models/character.glb', userId]
+      );
+      user.avatarURL = '/models/character.glb';
+    } catch (e) {
+      console.error('Ошибка обновления avatarURL:', e);
+    }
+  }
+  
+  res.json(user);
 });
 
 app.get('/api/players/:socketId', authenticate, async (req, res) => {
@@ -556,40 +589,72 @@ app.get('/api/players/:socketId', authenticate, async (req, res) => {
       stress_level  AS "stressLevel",
       satiety,
       thirst,
-      diseases,
-      last_city_id  AS "last_city_id",
-      last_pos_x    AS "last_pos_x",
-      last_pos_z    AS "last_pos_z"
+      diseases
      FROM users
      WHERE id = $1
    `, [dbId]);
 
   if (!rows.length) return res.status(404).json({ error: 'User not found in database' });
-  res.json(rows[0]);
+  
+  const user = rows[0];
+  
+  // Автоматически исправляем неправильный avatarURL
+  if (!user.avatarURL || user.avatarURL === 'try' || user.avatarURL === 'undefined' || user.avatarURL === 'null') {
+    console.log(`Исправляем неправильный avatarURL для игрока ${dbId}: ${user.avatarURL} -> /models/character.glb`);
+    
+    try {
+      await db.query(
+        'UPDATE users SET avatar_url = $1 WHERE id = $2',
+        ['/models/character.glb', dbId]
+      );
+      user.avatarURL = '/models/character.glb';
+    } catch (e) {
+      console.error('Ошибка обновления avatarURL:', e);
+    }
+  }
+  
+  res.json(user);
 });
 
 app.post('/api/register', async (req, res) => {
-  console.log('register request:');
-  const { email, password, firstName, lastName, gender, age, city, avatarURL } = req.body;
-  const { rowCount } = await db.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
-  if (rowCount) return res.status(400).json({ error: 'Почта уже занята' });
+  try {
+    console.log('register request:', req.body?.email);
+   const { email, password, firstName, lastName, gender, age, city, avatarURL } = req.body || {};
 
-  const hash = await bcrypt.hash(password, 10);
-  const insertSQL = `
-    INSERT INTO users(email, password_hash, first_name, last_name, gender, age, city, avatar_url)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-    RETURNING id, email, created_at
-  `;
-  const result = await db.query(insertSQL, [
-    email, hash, firstName, lastName, gender, age, city, avatarURL
-  ]);
+    if (!email || !password || !firstName || !lastName) {
+      return res.status(400).json({ error: 'Не заполнены обязательные поля' });
+    }
 
-  const user = result.rows[0];
-  await economy.createAccount(user.id, 'USD');
-  const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
-    expiresIn: '12h'
-  });
-  res.json({ success: true, token });
+    const { rowCount } = await db.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
+    if (rowCount) return res.status(400).json({ error: 'Почта уже занята' });
+    const hash = await bcrypt.hash(password, 10);
+    const insertSQL = `
+      INSERT INTO users(email, password_hash, first_name, last_name, gender, age, city, avatar_url)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING id, email, created_at
+    `;
+    const result = await db.query(insertSQL, [
+     email, hash, firstName, lastName, gender ?? null, age ?? null, city ?? null, avatarURL ?? null
+    ]);
+
+   const user = result.rows[0];
+   // Не даём регистрации упасть, если экономика не завелась
+    try {
+      await Economy.createAccount(user.id, 'USD');
+    } catch (e) {
+      console.error('Economy.createAccount failed:', e);
+    }
+
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET не задан в окружении (.env)');
+      return res.status(500).json({ error: 'Ошибка конфигурации сервера' });
+    }
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '12h' });
+    res.json({ success: true, token });
+  } catch (e) {
+    console.error('Ошибка регистрации:', e);
+    res.status(500).json({ error: 'Внутренняя ошибка регистрации' });
+  }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -640,8 +705,17 @@ app.get('/api/cities/:cityId/objects', authenticate, async (req, res) => {
   const cityId = req.params.cityId;
   try {
     const { rows } = await db.query(`
-      SELECT id, name, model_url, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, organization_id,
-             COALESCE(collidable, true) AS collidable
+      SELECT id,
+             name,
+             model_url,
+             pos_x, pos_y, pos_z,
+             rot_x, rot_y, rot_z,
+             COALESCE(scale_x, 1) AS scale_x,
+             COALESCE(scale_y, 1) AS scale_y,
+             COALESCE(scale_z, 1) AS scale_z,
+             organization_id,
+             COALESCE(collidable, true) AS collidable,
+             COALESCE(textures, '-') AS textures
       FROM city_objects
       WHERE city_id = $1
     `, [cityId]);
@@ -661,6 +735,29 @@ app.get('/api/models', authenticate, async (req, res) => {
     res.json(glbs);
   } catch (e) {
     res.status(500).json({ error: 'Ошибка чтения списка моделей' });
+  }
+});
+
+// Обновить avatarURL пользователя
+app.put('/api/profile/avatar', authenticate, async (req, res) => {
+  const { avatarURL } = req.body;
+  const userId = req.user.id;
+  
+  try {
+    // Проверяем, что avatarURL не пустой и валидный
+    if (!avatarURL || avatarURL === 'try' || avatarURL === 'undefined' || avatarURL === 'null') {
+      return res.status(400).json({ error: 'Неправильный avatarURL' });
+    }
+    
+    await db.query(
+      'UPDATE users SET avatar_url = $1 WHERE id = $2',
+      [avatarURL, userId]
+    );
+    
+    res.json({ success: true, avatarURL });
+  } catch (e) {
+    console.error('Ошибка обновления avatarURL:', e);
+    res.status(500).json({ error: 'Ошибка обновления avatarURL' });
   }
 });
 
@@ -691,12 +788,11 @@ app.post('/api/interiors/:interiorId/enter', authenticate, async (req, res) => {
   const interiorId = parseInt(req.params.interiorId, 10);
   try {
     const interior = (await db.query(
-      'SELECT city_id, spawn_x, spawn_y, spawn_z, spawn_rot, exit_x, exit_y, exit_z, exit_rot FROM interiors WHERE id = $1',
-        [interiorId]
-      )).rows[0];
+      'SELECT spawn_x, spawn_y, spawn_z, spawn_rot, exit_x, exit_y, exit_z, exit_rot FROM interiors WHERE id = $1',
+      [interiorId]
+    )).rows[0];
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
     res.json({
-      cityId: interior.city_id || 1,
       spawn: {
         x: interior.spawn_x,
         y: interior.spawn_y,
@@ -708,7 +804,7 @@ app.post('/api/interiors/:interiorId/enter', authenticate, async (req, res) => {
         y: interior.exit_y,
         z: interior.exit_z,
         rot: interior.exit_rot
-      }, 
+      }
     });
   } catch (e) {
     console.error(e);
@@ -1234,3 +1330,15 @@ async function ensureInteriorsSpawnColumns() {
   }
 }
 ensureInteriorsSpawnColumns();
+
+// Добавляем колонки масштаба для городских объектов, если ещё не созданы
+async function ensureCityObjectsScaleColumns() {
+  try {
+    await db.query('ALTER TABLE city_objects ADD COLUMN IF NOT EXISTS scale_x NUMERIC DEFAULT 1');
+    await db.query('ALTER TABLE city_objects ADD COLUMN IF NOT EXISTS scale_y NUMERIC DEFAULT 1');
+    await db.query('ALTER TABLE city_objects ADD COLUMN IF NOT EXISTS scale_z NUMERIC DEFAULT 1');
+  } catch (e) {
+    console.error('Ошибка добавления scale колонок в city_objects', e);
+  }
+}
+ensureCityObjectsScaleColumns();

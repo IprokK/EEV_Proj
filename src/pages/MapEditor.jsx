@@ -207,7 +207,10 @@ export default function MapEditor() {
       pos_z: obj.position.z,
       rot_x: obj.rotation.x,
       rot_y: obj.rotation.y,
-      rot_z: obj.rotation.z
+      rot_z: obj.rotation.z,
+      scale_x: obj.scale.x,
+      scale_y: obj.scale.y,
+      scale_z: obj.scale.z
     }));
     const token = localStorage.getItem('token');
     fetch('/api/save-map', {

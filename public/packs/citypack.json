@@ -1,0 +1,7 @@
+{
+  "baseColor": "/textures/base.png",
+  "normal": "/textures/grid.png",
+  "specular": "/textures/specular.png",
+  "roughness": 0.5,
+  "metalness": 0.1
+}

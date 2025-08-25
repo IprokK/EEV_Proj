@@ -22,40 +22,6 @@ function Game({ avatarUrl, gender }) {
   // 2) реф для группы «города»
   const cityGroupRef = useRef(null);
 
-    /**
-   * Безопасно получает .current у рефа. Если сам ref == null ИЛИ ref.current == null,
-   * вернёт null и залогирует понятную причину.
-   */
-  function getRef(ref, name = 'ref') {
-    if (ref === null) {
-      console.error(`[REF] ${name} variable is null (handler called before init?)`);
-      return null;
-    }
-    if (typeof ref !== 'object' || !('current' in ref)) {
-      console.error(`[REF] ${name} is not a ref-like object`);
-      return null;
-    }
-    if (ref.current == null) {
-      console.warn(`[REF] ${name}.current is not ready yet`);
-      return null;
-    }
-    return ref.current;
-  }
-
-  /**
-   * Удобные однотипные геттеры — сокращают повтор.
-  */
-  const getScene  = () => getRef(sceneRef, 'sceneRef');
-  const getPlayer = () => getRef(playerRef, 'playerRef');
-  const getCityGroup = () => getRef(cityGroupRef, 'cityGroupRef');
-  const getExitMarker = () => getRef(exitMarkerRef, 'exitMarkerRef');
-
-  /**
-   * Быстрые проверки перед действиями, требующими инициализации 3D.
-   */
-  const ensureSceneAndPlayer = () => !!(getScene() && getPlayer());
-
-
   // 3) реф для группы «интерьера»
   const interiorGroupRef = useRef(null);
   const cleanupTimerRef = useRef(null);
@@ -69,7 +35,7 @@ function Game({ avatarUrl, gender }) {
   const fpCamRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
-  const moveInputRef = useRef({ forward: false, backward: false, left: false, right: false });
+  const moveInputRef = useRef({ forward: false, backward: false, left: false, right: false, strafeLeft: false, strafeRight: false });
   const fpPitchRef = useRef(0);
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const isInInteriorRef = useRef(false);
@@ -79,11 +45,13 @@ function Game({ avatarUrl, gender }) {
 
   const [selectedHouse, setSelectedHouse] = useState(null);
   const [isInInterior, setIsInInterior] = useState(false);
-  const [mountRef, setMountRef] = useState(null);
+  const mountRef = useRef(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
+    console.log('useEffect isInInterior изменился:', isInInterior);
     isInInteriorRef.current = isInInterior;
+    console.log('isInInteriorRef.current установлен в:', isInInteriorRef.current);
   }, [isInInterior]);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStats, setPlayerStats] = useState(null);
@@ -168,7 +136,7 @@ function Game({ avatarUrl, gender }) {
     //const [currentForm, setCurrentForm] = useState(null);
 
   //Телефон
-    const scene = new THREE.Scene();
+    let scene, renderer;
     const playerRef = useRef(null);
     const cityMeshesRef = useRef([]);
     const cityObjectsDataRef = useRef([]);
@@ -537,101 +505,48 @@ function Game({ avatarUrl, gender }) {
       });
     }
 
-    async function loadInteriorScene(interiorId) {
-      const token = localStorage.getItem('token');
-      const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: 'include',
-        cache: 'no-cache'
-      });
-
-      if (!defRes.ok) {
-        const errText = await defRes.text();
-        console.error(`Ошибка ${defRes.status} при загрузке определения интерьера: ${errText}`);
-        alert(`Не удалось загрузить определение интерьера: ${errText}`);
-        return;
+    async function enterInteriorMode(interiorId) {
+      console.log('enterInteriorMode вызвана для интерьера:', interiorId);
+      
+      // Сохраняем текущую позицию игрока
+      if (playerRef.current) {
+        savedPositionRef.current.copy(playerRef.current.position);
       }
-
-      const { glb, objects } = await defRes.json();
-      const baseUrl = window.location.origin;
-      const glbUrl = baseUrl + glb;
-      console.log('Loading GLB from', glbUrl);
-
-      // подстраховка: перед загрузкой проверяем, что URL физически отдает не HTML
-      const headResp = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
-      if (!headResp.ok) throw new Error(`GLB not reachable: HTTP ${headResp.status}`);
-      const gltf = await loadGLTF(glbUrl);
-
-
-
-      const scene = sceneRef.current;
-      savedPositionRef.current.copy(playerRef.current.position);
-      toggleWorldVisibility(false);
-      scene.remove(cityGroupRef.current);
-
-      const intGroup = new THREE.Group();
-      intGroup.name = 'interiorGroup';
-      intGroup.add(gltf.scene);
-
-      interiorInteractablesRef.current = []; // сбрасываем реестр интерактива
-
-      for (const o of objects) {
-        if (o.model_url) {
-          try {
-            const objGltf = await loadGLTF(baseUrl + o.model_url);
-            objGltf.scene.position.set(o.x, o.y, o.z);
-            objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-            objGltf.scene.scale.set(o.scale, o.scale, o.scale);
-            intGroup.add(objGltf.scene);
-          } catch (e) {
-            console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
-          }
-        } else {
-          const mesh = baseChairMesh.clone();
-          mesh.position.set(o.x, o.y, o.z);
-          mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
-          mesh.scale.set(o.scale, o.scale, o.scale);
-            // по умолчанию делаем «чистую» геометрию…
-            intGroup.add(mesh);
-          }
-          // Если сервер прислал «маркер»/NPC — пометим кликабельным
-          // (ожидаем флаг o.interactable и/или o.marker === true)
-          if (o.interactable || o.marker) {
-            // добавим небольшой «хитбокс» для клика
-            const hit = new THREE.Mesh(
-              new THREE.SphereGeometry(0.6),
-              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, depthWrite: false })
-            );
-            hit.position.set(o.x, o.y + 1.0, o.z);
-            hit.userData.interactable = true;
-            hit.userData.payload = { type: o.type || 'marker', id: o.id || null, label: o.label || 'Интерактив' };
-            // не даем этому спрайту мешать внешним лучам
-            hit.raycast = hit.raycast; // оставим по умолчанию; это НЕ Sprite
-            intGroup.add(hit);
-            interiorInteractablesRef.current.push(hit);
-          }
+      
+      // Загружаем модель интерьера
+      console.log('Загружаем модель интерьера');
+      await loadInteriorModel(interiorId);
+      
+      // Переключаемся на камеру от первого лица
+      console.log('Переключаемся на камеру от первого лица');
+      switchToFirstPersonCamera();
+      
+      // Включаем управление мышью для интерьера
+      document.body.style.cursor = 'none'; // Скрываем курсор
+      if (rendererRef.current) {
+        rendererRef.current.domElement.requestPointerLock();
       }
-
-      const light = new THREE.AmbientLight(0xffffff, 1);
-      intGroup.add(light);
-
-      scene.add(intGroup);
-      interiorGroupRef.current = intGroup;
+      
+      // Устанавливаем состояние "в интерьере"
+      console.log('Устанавливаем setIsInInterior(true)');
       setIsInInterior(true);
       setSelectedHouse(null);
+      
+      console.log('isInInterior установлен в true');
+      
+      // Телепортируем игрока в интерьер (если нужно)
+      console.log('Вызываем teleportPlayerToInterior для интерьера:', interiorId);
+      await teleportPlayerToInterior(interiorId);
+      console.log('teleportPlayerToInterior завершена');
     }
-    const enterInterior = async (interiorId) => {
+    const teleportPlayerToInterior = async (interiorId) => {
+      console.log('teleportPlayerToInterior вызвана для интерьера:', interiorId);
+      console.log('playerRef.current:', playerRef.current);
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Пожалуйста, войдите в систему, чтобы войти в здание');
         return;
       }
-
-      // Сцена/игрок должны быть инициализированы
-      if (!ensureSceneAndPlayer()) return;
-      const scene  = getScene();
-      const player = getPlayer();
-
       try {
         const res = await fetch(`/api/interiors/${interiorId}/enter`, {
           method: 'POST',
@@ -645,36 +560,356 @@ function Game({ avatarUrl, gender }) {
           alert(`Не удалось получить координаты интерьера: ${errText}`);
           return;
         }
-        const data = await res.json();
-        const { spawn, exit, cityId } = data;
-        // Если интерьер в другом городе — переключаем город
-        const profile0 = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const myCityId0 = profile0.last_city_id || 1;
-        if (cityId && cityId !== myCityId0) {
-          socketRef.current?.emit('cityChange', { cityId });
-          profile0.last_city_id = cityId;
-          sessionStorage.setItem('user_profile', JSON.stringify(profile0));
-        }
+        const { spawn, exit } = await res.json();
         if (!spawn) {
           alert('Для этого интерьера не заданы координаты входа');
           return;
         }
         // Телепортируем игрока в интерьер
-        
-        // Телепорт игрока
-        player.position.set(spawn.x, spawn.y, spawn.z);
-        player.rotation.y = THREE.MathUtils.degToRad(spawn.rot);
-        // Можно добавить сброс скорости, анимации и т.д. при необходимости
-        
+        if (playerRef.current) {
+          playerRef.current.position.set(spawn.x, spawn.y, spawn.z);
+          playerRef.current.rotation.set(0, spawn.rot || 0, 0);
+          // Можно добавить сброс скорости, анимации и т.д. при необходимости
+        }
         setCurrentExit(exit || null);
         // Добавляем маркер выхода
         if (exit) {
           addExitMarker(exit);
         }
+        console.log('teleportPlayerToInterior завершена успешно');
       } catch (e) {
         console.error('Failed to enter interior:', e);
       }
     };
+
+    async function loadInteriorModel(interiorId) {
+      console.log('loadInteriorModel вызвана для интерьера:', interiorId);
+      const token = localStorage.getItem('token');
+      
+      try {
+        const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          cache: 'no-cache'
+        });
+
+        if (!defRes.ok) {
+          const errText = await defRes.text();
+          console.error(`Ошибка ${defRes.status} при загрузке определения интерьера: ${errText}`);
+          return;
+        }
+
+        const { glb, objects } = await defRes.json();
+        const baseUrl = window.location.origin;
+        const glbUrl = baseUrl + glb;
+        console.log('Loading interior GLB from', glbUrl);
+
+        // Проверяем доступность GLB файла
+        const headResp = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
+        if (!headResp.ok) {
+          console.error(`GLB not reachable: HTTP ${headResp.status}`);
+          return;
+        }
+
+        const gltf = await loadGLTF(glbUrl);
+        const scene = sceneRef.current;
+
+        // Создаем группу для интерьера
+        const intGroup = new THREE.Group();
+        intGroup.name = 'interiorGroup';
+        intGroup.add(gltf.scene);
+
+        // Добавляем объекты интерьера
+        interiorInteractablesRef.current = []; // сбрасываем реестр интерактива
+
+        for (const o of objects) {
+          if (o.model_url) {
+            try {
+              const objGltf = await loadGLTF(baseUrl + o.model_url);
+              objGltf.scene.position.set(o.x, o.y, o.z);
+              objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+              objGltf.scene.scale.set(o.scale, o.scale, o.scale);
+              intGroup.add(objGltf.scene);
+            } catch (e) {
+              console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
+            }
+          } else {
+            const mesh = baseChairMesh.clone();
+            mesh.position.set(o.x, o.y, o.z);
+            mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
+            mesh.scale.set(o.scale, o.scale, o.scale);
+            intGroup.add(mesh);
+          }
+          
+          // Если сервер прислал «маркер»/NPC — пометим кликабельным
+          if (o.interactable || o.marker) {
+            const hit = new THREE.Mesh(
+              new THREE.SphereGeometry(0.6),
+              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, depthWrite: false })
+            );
+            hit.position.set(o.x, o.y + 1.0, o.z);
+            hit.userData.interactable = true;
+            hit.userData.payload = { type: o.type || 'marker', id: o.id || null, label: o.label || 'Интерактив' };
+            intGroup.add(hit);
+            interiorInteractablesRef.current.push(hit);
+          }
+        }
+
+        // Добавляем освещение для интерьера
+        const light = new THREE.AmbientLight(0xffffff, 1);
+        intGroup.add(light);
+
+        // Добавляем группу в сцену
+        scene.add(intGroup);
+        interiorGroupRef.current = intGroup;
+        
+        console.log('Модель интерьера загружена успешно');
+      } catch (e) {
+        console.error('Ошибка загрузки модели интерьера:', e);
+      }
+    }
+
+    // Кэш для загруженных текстурпаков
+    const texturePackCache = new Map();
+
+
+
+    function loadTexturePackForMesh(texturePackUrl, mesh, forceReplace = false) {
+      console.log('loadTexturePackForMesh вызвана:', { texturePackUrl, mesh });
+      
+      // Проверяем, есть ли уже загруженный текстурпак в кэше
+      if (texturePackCache.has(texturePackUrl)) {
+        console.log('Используем кэшированный текстурпак:', texturePackUrl);
+        const cachedTextures = texturePackCache.get(texturePackUrl);
+        applyTexturesToMesh(mesh, cachedTextures, forceReplace, texturePackUrl);
+        return;
+      }
+
+      console.log('Загружаем текстурпак для меша:', texturePackUrl);
+      
+      // Загружаем текстурпак асинхронно
+      const baseUrl = window.location.origin;
+      const fullUrl = texturePackUrl.startsWith('http') ? texturePackUrl : baseUrl + texturePackUrl;
+      console.log('Полный URL для загрузки:', fullUrl);
+      
+      fetch(fullUrl)
+        .then(response => {
+          console.log('Ответ сервера для текстурпака:', response.status, response.statusText);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          console.log('Начинаем парсинг JSON...');
+          return response.json();
+        })
+        .then(texturePack => {
+          console.log('Загруженный текстурпак:', texturePack);
+          
+          // Кэшируем загруженный текстурпак
+          texturePackCache.set(texturePackUrl, texturePack);
+          
+          // Проверяем, что меш все еще существует и валиден
+          if (mesh && mesh.isMesh && mesh.material) {
+            // Применяем текстуры к мешу (функция сама проверит типы материалов/массивы)
+            applyTexturesToMesh(mesh, texturePack, forceReplace, texturePackUrl);
+          } else {
+            console.warn('Меш не подходит для применения текстурпака:', {
+              hasMesh: !!mesh,
+              isMesh: mesh?.isMesh,
+              hasMaterial: !!mesh?.material
+            });
+          }
+        })
+        .catch(error => {
+          console.error('Ошибка загрузки текстурпака:', texturePackUrl, error);
+          // В случае ошибки оставляем оригинальные материалы
+          if (mesh.material) {
+            mesh.material.needsUpdate = true;
+          }
+        });
+    }
+
+    // Предсоздаём материал в стиле MapEditor для citypack.json
+    const cityPackMaterialCache = new Map(); // url -> material
+
+    function getCityPackMaterial(texturePackUrl, texturePack) {
+      if (cityPackMaterialCache.has(texturePackUrl)) return cityPackMaterialCache.get(texturePackUrl);
+      const mat = new THREE.MeshStandardMaterial();
+      if (typeof texturePack.baseColor === 'string') {
+        const loader = new THREE.TextureLoader();
+        const tex = loader.load(texturePack.baseColor);
+        if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+        mat.map = tex;
+      }
+      mat.roughness = typeof texturePack.roughness === 'number' ? texturePack.roughness : 0.5;
+      mat.metalness = typeof texturePack.metalness === 'number' ? texturePack.metalness : 0.1;
+      cityPackMaterialCache.set(texturePackUrl, mat);
+      return mat;
+    }
+
+    function applyTexturesToMesh(mesh, texturePack, forceReplace = false, texturePackUrl) {
+      console.log('applyTexturesToMesh вызвана:', { mesh, texturePack });
+      
+      if (!mesh || !texturePack) {
+        console.warn('applyTexturesToMesh: отсутствует меш или текстурпак', { 
+          hasMesh: !!mesh,
+          hasTexturePack: !!texturePack 
+        });
+        return;
+      }
+      
+      if (!mesh.material) {
+        console.warn('У меша нет материала');
+        return;
+      }
+      
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const targetMaterials = materials.filter(m => m && m.isMaterial && (m.type === 'MeshStandardMaterial' || m.type === 'MeshPhysicalMaterial' || m.type === 'MeshPhongMaterial'));
+      if (targetMaterials.length === 0) {
+        console.warn('Нет подходящих материалов для применения текстур:', mesh.material);
+        return;
+      }
+
+      // Особый режим: если это citypack.json — ведём себя как MapEditor: заменяем материал на единый стандартный
+      if (texturePackUrl === '/packs/citypack.json') {
+        const mat = getCityPackMaterial(texturePackUrl, texturePack).clone();
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map(() => mat.clone());
+        } else {
+          mesh.material = mat.clone();
+        }
+        mesh.traverse?.((child) => {
+          if (child.isMesh) {
+            child.material = Array.isArray(child.material) ? child.material.map(() => mat.clone()) : mat.clone();
+          }
+        });
+        return;
+      }
+      
+      // baseColor map — по умолчанию не перетираем; при forceReplace перезаписываем
+      if (typeof texturePack.baseColor === 'string') {
+        console.log('Загружаем baseColor текстуру:', texturePack.baseColor);
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.baseColor, (texture) => {
+          if (THREE.SRGBColorSpace) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+          }
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+              if (forceReplace || !mat.map) {
+                mat.map = texture;
+                if (mat.color && mat.color.set) mat.color.set(0xffffff);
+                mat.needsUpdate = true;
+              }
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки baseColor текстуры:', error);
+        });
+      }
+      
+      // normal map
+      if (typeof texturePack.normal === 'string') {
+        console.log('Загружаем normal текстуру:', texturePack.normal);
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.normal, (texture) => {
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+              if (forceReplace || !mat.normalMap) {
+                mat.normalMap = texture;
+                mat.needsUpdate = true;
+              }
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки normal текстуры:', error);
+        });
+      }
+      
+      // roughness map or value
+      if (typeof texturePack.roughness === 'string') {
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.roughness, (texture) => {
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+              if (forceReplace || !mat.roughnessMap) {
+                mat.roughnessMap = texture;
+                mat.needsUpdate = true;
+              }
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки roughness текстуры:', error);
+        });
+      } else if (typeof texturePack.roughness === 'number') {
+        targetMaterials.forEach(mat => {
+          if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+            if (forceReplace || mat.roughnessMap == null) {
+              mat.roughness = texturePack.roughness;
+              mat.needsUpdate = true;
+            }
+          }
+        });
+      }
+      
+      // metalness map or value (key metallic for map, metalness for value)
+      if (typeof texturePack.metallic === 'string') {
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.metallic, (texture) => {
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+              if (forceReplace || !mat.metalnessMap) {
+                mat.metalnessMap = texture;
+                mat.needsUpdate = true;
+              }
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки metallic текстуры:', error);
+        });
+      }
+      if (typeof texturePack.metalness === 'number') {
+        targetMaterials.forEach(mat => {
+          if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+            if (forceReplace || mat.metalnessMap == null) {
+              mat.metalness = texturePack.metalness;
+              mat.needsUpdate = true;
+            }
+          }
+        });
+      }
+      
+      // ambient occlusion map
+      if (typeof texturePack.ao === 'string') {
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.ao, (texture) => {
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshStandardMaterial' || mat.type === 'MeshPhysicalMaterial') {
+              if (forceReplace || !mat.aoMap) {
+                mat.aoMap = texture;
+                mat.needsUpdate = true;
+              }
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки ao текстуры:', error);
+        });
+      }
+      
+      // specular only for Phong
+      if (typeof texturePack.specular === 'string') {
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(texturePack.specular, (texture) => {
+          targetMaterials.forEach(mat => {
+            if (mat.type === 'MeshPhongMaterial') {
+              mat.specularMap = texture;
+              mat.needsUpdate = true;
+            }
+          });
+        }, undefined, (error) => {
+          console.error('Ошибка загрузки specular текстуры:', error);
+        });
+      }
+    }
 
     function addExitMarker(exit) {
       // Удаляем старый маркер, если был
@@ -693,22 +928,42 @@ function Game({ avatarUrl, gender }) {
       window.exitMarkerMesh = marker;
     }
 
-    const exitInterior = () => {
-      if (!currentExit) {
-        alert('Не заданы координаты выхода из интерьера!');
-        return;
+        const exitInterior = () => {
+      console.log('exitInterior вызвана');
+      
+      // Возвращаем игрока на исходную позицию (если не телепортировали)
+      if (playerRef.current && savedPositionRef.current) {
+        playerRef.current.position.copy(savedPositionRef.current);
       }
-      if (playerRef.current) {
-        playerRef.current.position.set(currentExit.x, currentExit.y, currentExit.z);
-        playerRef.current.rotation.set(0, currentExit.rot || 0, 0);
-      }
-      // Удаляем маркер выхода
+
+      // Удаляем маркер выхода, если был
       if (window.exitMarkerMesh && sceneRef.current) {
         sceneRef.current.remove(window.exitMarkerMesh);
         window.exitMarkerMesh = null;
       }
+
+      // Удаляем группу интерьера, если она есть
+      if (interiorGroupRef.current && sceneRef.current) {
+        sceneRef.current.remove(interiorGroupRef.current);
+        interiorGroupRef.current = null;
+        console.log('Группа интерьера удалена');
+      }
+
+      // Возвращаем третье лицо/камеру и актуализировать видимость объектов города
+      switchToThirdPersonCamera?.();
+      // Безопасный вызов без ReferenceError, даже если функция ещё не определена
+      if (typeof updateCityObjectVisibility === 'function') {
+        updateCityObjectVisibility();
+      }
+      
+      // Возвращаем курсор и отключаем pointer lock
+      document.body.style.cursor = 'default';
+      document.exitPointerLock();
+
+      setIsInInterior(false);
       setCurrentExit(null);
     };
+
 
     // В useEffect для кликов по сцене:
     useEffect(() => {
@@ -1094,25 +1349,53 @@ function Game({ avatarUrl, gender }) {
 
 
 async function movePlayerToInterior(interiorId) {
-  await enterInterior(interiorId);
+  await enterInteriorMode(interiorId);
 }
 
 function switchToFirstPersonCamera() {
+  console.log('switchToFirstPersonCamera вызвана');
+  console.log('isInInteriorRef.current:', isInInteriorRef.current);
+  
   if (fpCamRef.current) {
     cameraRef.current = fpCamRef.current;
+    console.log('Камера переключена на fpCamRef');
   }
   if (playerRef.current) {
     playerRef.current.visible = false;
+    console.log('Игрок скрыт');
   }
   fpPitchRef.current = 0;
+  
+  // Настраиваем камеру от первого лица для интерьера
+  if (isInInteriorRef.current) {
+    console.log('Настраиваем камеру для интерьера');
+    // Устанавливаем позицию камеры на уровне глаз игрока
+    const headHeight = 1.6;
+    fpCamRef.current.position.set(
+      playerRef.current.position.x,
+      playerRef.current.position.y + headHeight,
+      playerRef.current.position.z
+    );
+    
+    // Направляем камеру в том же направлении, что и игрок
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyEuler(new THREE.Euler(0, playerRef.current.rotation.y, 0));
+    fpCamRef.current.lookAt(
+      fpCamRef.current.position.clone().add(direction)
+    );
+    console.log('Камера настроена для интерьера');
+  }
 }
 
 function switchToThirdPersonCamera() {
+  console.log('switchToThirdPersonCamera вызвана');
   if (orthoCamRef.current) {
     cameraRef.current = orthoCamRef.current;
+    console.log('Камера переключена на orthoCamRef');
   }
   if (playerRef.current) {
     playerRef.current.visible = true;
+    console.log('Игрок показан');
   }
   fpPitchRef.current = 0;
 }
@@ -1214,6 +1497,54 @@ useEffect(() => {
     });
   }
 
+  function createInterior() {
+    const group = new THREE.Group();
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x808080 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    group.add(floor);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x999999 });
+    const wallGeo = new THREE.PlaneGeometry(20, 10);
+    const back = new THREE.Mesh(wallGeo, wallMat);
+    back.position.set(0, 5, -10);
+    group.add(back);
+    const front = back.clone();
+    front.position.set(0, 5, 10);
+    front.rotation.y = Math.PI;
+    group.add(front);
+    const left = back.clone();
+    left.position.set(-10, 5, 0);
+    left.rotation.y = Math.PI / 2;
+    group.add(left);
+    const right = back.clone();
+    right.position.set(10, 5, 0);
+    right.rotation.y = -Math.PI / 2;
+    group.add(right);
+
+    const light = new THREE.PointLight(0xffffff, 1);
+    light.position.set(0, 5, 0);
+    group.add(light);
+
+    return group;
+  }
+
+  function enterHouse(house) {
+    if (!house || !sceneRef.current || !playerRef.current) return;
+    const id = parseInt(house.id, 10);
+    if (id === 9) {
+      savedPositionRef.current.copy(playerRef.current.position);
+      toggleWorldVisibility(false);
+      interiorGroupRef.current = createInterior();
+      sceneRef.current.add(interiorGroupRef.current);
+      playerRef.current.position.set(0, 0, 0);
+      playerRef.current.quaternion.identity();
+      setSelectedHouse(null);
+      switchToFirstPersonCamera();
+      setIsInInterior(true);
+    }
+  }
+
   useEffect(() => {
     console.log('[DEBUG] useEffect вызван');
     const mount = mountRef.current;
@@ -1312,7 +1643,6 @@ useEffect(() => {
     const minZoom = zoom * 0.1;
     const maxZoom = zoom * 3.5;
 
-    let scene, renderer;
     let orthoCamera, fpCamera;
     let player, mixer;
     let idleAction, walkAction, currentAction;
@@ -1322,7 +1652,13 @@ useEffect(() => {
     let blockedTime = 0; 
     const moveSpeed = 2.5;
     const WALK_ANIM_SPEED_MPS = 2;
-    const clock = new THREE.Clock();
+    let clock;
+    try {
+      clock = new THREE.Clock();
+    } catch (error) {
+      console.error('Ошибка создания THREE.Clock:', error);
+      return;
+    }
     const keys = {};
       let npcMeshes = [];
     const territorySize = 500;
@@ -1338,16 +1674,36 @@ useEffect(() => {
     let customMaterial;
 
     const token = localStorage.getItem('token');
-    socketRef.current = io({
-    transports: ['websocket','polling'],
-      auth: { token }
+    // Подключаемся к локальному серверу
+    const serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+      ? 'http://localhost:4000' 
+      : window.location.origin;
+    
+    socketRef.current = io(serverUrl, {
+      transports: ['websocket','polling'],
+      auth: { token },
+      timeout: 20000 // Увеличиваем timeout до 20 секунд
     });
     const socket = socketRef.current;
 
     console.log('socket инстанс:', socket);
-    socket.on('connect', () => console.log('✔ Socket connected, id=', socket.id));
-    socket.on('connect_error', err => console.error('Socket connect_error:', err));
-    socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
+    console.log('Подключение к серверу:', serverUrl);
+    
+    socket.on('connect', () => {
+      console.log('✔ Socket connected, id=', socket.id);
+      console.log('Подключение успешно установлено');
+    });
+    
+    socket.on('connect_error', err => {
+      console.error('Socket connect_error:', err);
+      console.error('Ошибка подключения к серверу:', serverUrl);
+      console.error('Проверьте, что сервер запущен на порту 4000');
+    });
+    
+    socket.on('disconnect', reason => {
+      console.warn('Socket disconnected:', reason);
+      console.warn('Соединение разорвано, причина:', reason);
+    });
     const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     if (profile?.id) {
       socket.emit('economy:getBalance', { userId: profile.id });
@@ -1372,10 +1728,33 @@ useEffect(() => {
 
     async function loadPlayerModel(avatarUrl) {
       return new Promise((resolve, reject) => {
-        gltfLoader.load(avatarUrl, (gltf) => {
-          if (!gltf.scene) return reject('GLTF.scene отсутствует');
-          resolve(gltf);
-        }, undefined, (err) => reject(err));
+        console.log('GLTFLoader загружает:', avatarUrl);
+        
+        // Проверяем, что URL начинается с правильного пути
+        if (!avatarUrl.startsWith('/') && !avatarUrl.startsWith('http')) {
+          console.error('Неправильный формат URL:', avatarUrl);
+          reject(new Error('Неправильный формат URL'));
+          return;
+        }
+        
+        gltfLoader.load(
+          avatarUrl, 
+          (gltf) => {
+            console.log('GLTF загружен успешно:', gltf);
+            if (!gltf.scene) {
+              console.error('GLTF.scene отсутствует в загруженном файле');
+              return reject('GLTF.scene отсутствует');
+            }
+            resolve(gltf);
+          }, 
+          (progress) => {
+            console.log('Прогресс загрузки:', progress);
+          }, 
+          (err) => {
+            console.error('Ошибка загрузки GLTF:', err);
+            reject(err);
+          }
+        );
       });
     }
 
@@ -1385,6 +1764,27 @@ useEffect(() => {
         if (!avatarURL) throw new Error('no avatarURL');
         const gltf = await loadPlayerModel(avatarURL);
         model = gltf.scene;
+        
+        // Проверяем и исправляем материалы модели
+        model.traverse((child) => {
+            if (child.isMesh && child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(mat => {
+                                                        if (!mat || !mat.isMaterial) {
+                                    console.warn(`Неправильный материал в аватаре ${id}, заменяем на стандартный`);
+                                    if (THREE.MeshStandardMaterial) {
+                                        child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                                    } else {
+                                        console.error('THREE.MeshStandardMaterial не доступен для замены материала');
+                                    }
+                                }
+                    });
+                } else if (!child.material.isMaterial) {
+                    console.warn(`Неправильный материал в аватаре ${id}, заменяем на стандартный`);
+                    child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                }
+            }
+        });
       } catch (e) {
         console.warn(`Не удалось загрузить аватар ${id}, рисуем сферу`, e);
         model = new THREE.Mesh(
@@ -1447,7 +1847,8 @@ useEffect(() => {
         _idleTimeout: null
       };
 
-      remotePlayers[id].walkAction.setEffectiveTimeScale(0.6);
+      // Синхронизируем анимацию ходьбы с скоростью перемещения
+      remotePlayers[id].walkAction.setEffectiveTimeScale(moveSpeed / WALK_ANIM_SPEED_MPS);
     }
 
     function createVoiceIcon() {
@@ -1761,16 +2162,23 @@ useEffect(() => {
       remote.targetPosition = newPos.clone();
 
       if (remote.currentAction !== remote.walkAction) {
-        remote.currentAction.fadeOut(0.2);
-        remote.walkAction.reset().fadeIn(0.2).play();
+        // Более плавный переход к анимации ходьбы
+        const fadeTime = 0.3;
+        remote.currentAction.fadeOut(fadeTime);
+        remote.walkAction.reset().fadeIn(fadeTime).play();
         remote.currentAction = remote.walkAction;
+        
+        // Синхронизируем время анимации
+        remote.walkAction.time = 0;
       }
 
       clearTimeout(remote._idleTimeout);
       remote._idleTimeout = setTimeout(() => {
         if (remote.currentAction !== remote.idleAction) {
-          remote.currentAction.fadeOut(0.2);
-          remote.idleAction.reset().fadeIn(0.2).play();
+          // Более плавный переход к idle анимации
+          const fadeTime = 0.3;
+          remote.currentAction.fadeOut(fadeTime);
+          remote.idleAction.reset().fadeIn(fadeTime).play();
           remote.currentAction = remote.idleAction;
         }
       }, 500);
@@ -1787,6 +2195,15 @@ useEffect(() => {
     socket.on('newPlayer', (data) => {
       console.log('newPlayer', data);
       const { playerId, x, z, avatarURL, gender, firstName, lastName } = data;
+      
+      // Проверяем, не существует ли уже игрок с таким ID
+      if (remotePlayers[playerId]) {
+        console.log(`Игрок ${playerId} уже существует, обновляем позицию`);
+        // Обновляем позицию существующего игрока
+        remotePlayers[playerId].model.position.set(x, 0, z);
+        return;
+      }
+      
       addOtherPlayer(playerId, x, z, avatarURL, gender, firstName, lastName);
     });
 
@@ -1802,21 +2219,21 @@ useEffect(() => {
     });
 
 
-    // Мини-лоадер при загрузке интерьеров (обёртка поверх loadInteriorScene)
-    const _origLoadInteriorScene = loadInteriorScene;
-    loadInteriorScene = async (interiorId) => {
-      try {
-        // показываем мини-оверлей на время подзагрузки интерьера
-        createLoadingOverlay();
-        updateLoadingOverlay(30, 'Загрузка интерьера...');
-        await _origLoadInteriorScene(interiorId);
-      } finally {
-        setTimeout(removeLoadingOverlay, 120);
-      }
-    };
 
+
+    // Throttling для колеса мыши
+    let wheelTimeout = null;
+    
     function onMouseWheel(e) {
       e.preventDefault();
+      
+      // Throttling - обрабатываем только каждые 16ms (60fps)
+      if (wheelTimeout) return;
+      
+      wheelTimeout = setTimeout(() => {
+        wheelTimeout = null;
+      }, 16);
+      
       const delta = -e.deltaY * 0.001;
 
       if (e.ctrlKey) {
@@ -1834,25 +2251,88 @@ useEffect(() => {
       }
     }
 
+    // Throttling для движения мыши
+    let mouseMoveTimeout = null;
+    
     function onMouseLookMove(e) {
       if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !playerRef.current) return;
+      
+      // Throttling - обрабатываем только каждые 8ms (120fps для более плавного движения)
+      if (mouseMoveTimeout) return;
+      
+      mouseMoveTimeout = setTimeout(() => {
+        mouseMoveTimeout = null;
+      }, 8);
+      
       const movementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
       const movementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
-      playerRef.current.rotation.y -= movementX * 0.002;
-      fpPitchRef.current = THREE.MathUtils.clamp(
-        fpPitchRef.current - movementY * 0.002,
-        -Math.PI / 2 + 0.1,
-        Math.PI / 2 - 0.1
-      );
+      
+      // Уменьшаем чувствительность для более плавного движения
+      const sensitivity = 0.0015;
+      
+      // В интерьере поворачиваем только камеру, не игрока
+      if (isInInteriorRef.current) {
+        // Поворачиваем камеру по горизонтали (влево-вправо)
+        const yawDelta = -movementX * sensitivity;
+        const currentYaw = playerRef.current.rotation.y;
+        playerRef.current.rotation.y = currentYaw + yawDelta;
+        
+        // Поворачиваем камеру по вертикали (вверх-вниз)
+        const pitchDelta = -movementY * sensitivity;
+        fpPitchRef.current = THREE.MathUtils.clamp(
+          fpPitchRef.current + pitchDelta,
+          -Math.PI / 2 + 0.1,
+          Math.PI / 2 - 0.1
+        );
+      } else {
+        // В обычном режиме поворачиваем игрока
+        playerRef.current.rotation.y -= movementX * sensitivity;
+        fpPitchRef.current = THREE.MathUtils.clamp(
+          fpPitchRef.current - movementY * sensitivity,
+          -Math.PI / 2 + 0.1,
+          Math.PI / 2 - 0.1
+        );
+      }
     }
 
     async function init() {
       console.log('[DEBUG] init вызван');
+      
+      // Проверяем, что THREE загружен
+      if (!THREE) {
+        console.error('THREE.js не загружен');
+        return;
+      }
+      
+      // Проверяем, что THREE.Clock доступен
+      if (!THREE.Clock) {
+        console.error('THREE.Clock не доступен');
+        return;
+      }
+      
+      // Проверяем, что THREE.Scene доступен
+      if (!THREE.Scene) {
+        console.error('THREE.Scene не доступен');
+        return;
+      }
+      
       scene = new THREE.Scene();
       //scene.fog = new THREE.FogExp2(0xcce0ff, 0.002);
       sceneRef.current = scene;
       const aspect = window.innerWidth / window.innerHeight;
       const d = 200;
+
+      // Проверяем, что THREE.OrthographicCamera доступен
+      if (!THREE.OrthographicCamera) {
+        console.error('THREE.OrthographicCamera не доступен');
+        return;
+      }
+      
+      // Проверяем, что THREE.PerspectiveCamera доступен
+      if (!THREE.PerspectiveCamera) {
+        console.error('THREE.PerspectiveCamera не доступен');
+        return;
+      }
 
       orthoCamera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
       orthoCamera.position.set(200, 200, 200);
@@ -1866,14 +2346,90 @@ useEffect(() => {
       orthoCamRef.current = orthoCamera;
       fpCamRef.current = fpCamera;
 
-      renderer = new THREE.WebGLRenderer({ antialias: true });
+      // Проверяем поддержку WebGL
+      if (!window.WebGLRenderingContext) {
+        console.error('WebGL не поддерживается в этом браузере');
+        return;
+      }
+      
+      // Проверяем, что THREE.WebGLRenderer доступен
+      if (!THREE.WebGLRenderer) {
+        console.error('THREE.WebGLRenderer не доступен');
+        return;
+      }
+      
+      try {
+        renderer = new THREE.WebGLRenderer({ 
+          antialias: true,
+          alpha: true,
+          preserveDrawingBuffer: false
+        });
+      } catch (error) {
+        console.error('Ошибка создания WebGL renderer:', error);
+        // Попытка создать renderer без antialias
+        try {
+          renderer = new THREE.WebGLRenderer({ 
+            antialias: false,
+            alpha: true,
+            preserveDrawingBuffer: false
+          });
+        } catch (secondError) {
+          console.error('Не удалось создать WebGL renderer даже без antialias:', secondError);
+          return;
+        }
+      }
       renderer.setSize(window.innerWidth, window.innerHeight);
-      //renderer.setClearColor(0xcce0ff);
+      renderer.setClearColor(0x87CEEB, 1); // Голубое небо
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
       rendererRef.current = renderer;
-      mountRef.current.appendChild(renderer.domElement);
+      
+      if (mountRef.current) {
+        mountRef.current.appendChild(renderer.domElement);
+      } else {
+        console.error('mountRef.current не найден');
+        return;
+      }
 
-      renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
-      renderer.domElement.addEventListener('mousemove', onMouseLookMove);
+      if (renderer && renderer.domElement) {
+        renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+        renderer.domElement.addEventListener('mousemove', onMouseLookMove);
+      } else {
+        console.error('renderer или renderer.domElement не найден');
+        return;
+      }
+      
+      // Обработка событий pointer lock
+      if (renderer && renderer.domElement) {
+        renderer.domElement.addEventListener('click', () => {
+          if (isInInteriorRef.current && !document.pointerLockElement) {
+            renderer.domElement.requestPointerLock();
+          }
+        });
+      }
+      
+      document.addEventListener('pointerlockchange', () => {
+        if (renderer && renderer.domElement && document.pointerLockElement === renderer.domElement) {
+          console.log('Pointer lock activated');
+        } else {
+          console.log('Pointer lock deactivated');
+        }
+      });
+
+      // Проверяем, что THREE.PlaneGeometry доступен
+      if (!THREE.PlaneGeometry) {
+        console.error('THREE.PlaneGeometry не доступен');
+        return;
+      }
+      
+      // Проверяем, что THREE.MeshBasicMaterial доступен
+      if (!THREE.MeshBasicMaterial) {
+        console.error('THREE.MeshBasicMaterial не доступен');
+        return;
+      }
 
       const planeGeometry = new THREE.PlaneGeometry(territorySize, territorySize);
       const planeMaterial = new THREE.MeshBasicMaterial({
@@ -1882,10 +2438,29 @@ useEffect(() => {
         opacity: 0,        // невидим
         depthWrite: false  // не трогает Z-буфер
       });
+      
+      // Проверяем, что THREE.Mesh доступен
+      if (!THREE.Mesh) {
+        console.error('THREE.Mesh не доступен');
+        return;
+      }
+      
       groundPlane = new THREE.Mesh(planeGeometry, planeMaterial);
       groundPlane.rotation.x = -Math.PI / 2;
       scene.add(groundPlane);
       groundRef.current = groundPlane;
+
+      // Проверяем, что THREE.AmbientLight доступен
+      if (!THREE.AmbientLight) {
+        console.error('THREE.AmbientLight не доступен');
+        return;
+      }
+      
+      // Проверяем, что THREE.DirectionalLight доступен
+      if (!THREE.DirectionalLight) {
+        console.error('THREE.DirectionalLight не доступен');
+        return;
+      }
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
       scene.add(ambientLight);
@@ -1893,19 +2468,70 @@ useEffect(() => {
       directionalLight.position.set(50, 100, 50);
       scene.add(directionalLight);
 
+      // Проверяем, что THREE.SphereGeometry доступен
+      if (!THREE.SphereGeometry) {
+        console.error('THREE.SphereGeometry не доступен');
+        return;
+      }
+
       const markerGeometry = new THREE.SphereGeometry(0.5, 16, 16);
       const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
       destinationMarker = new THREE.Mesh(markerGeometry, markerMaterial);
       destinationMarker.visible = false;
       scene.add(destinationMarker);
 
+      // Проверяем, что THREE.LoadingManager доступен
+      if (!THREE.LoadingManager) {
+        console.error('THREE.LoadingManager не доступен');
+        return;
+      }
+      
+      // Проверяем, что THREE.TextureLoader доступен
+      if (!THREE.TextureLoader) {
+        console.error('THREE.TextureLoader не доступен');
+        return;
+      }
+
       const loadingManager = new THREE.LoadingManager(() => {
         console.log("Все текстуры загружены");
       });
       const textureLoader = new THREE.TextureLoader(loadingManager);
-      const baseTexture = textureLoader.load('textures/base.png');
+      const baseTexture = textureLoader.load('textures/base.png', 
+        // onLoad callback
+        (texture) => {
+          console.log('Текстура base.png загружена успешно');
+          if (THREE.SRGBColorSpace) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+          }
+        },
+        // onProgress callback
+        (progress) => {
+          console.log('Прогресс загрузки текстуры:', progress);
+        },
+        // onError callback
+        (error) => {
+          console.error('Ошибка загрузки текстуры base.png:', error);
+          // Создаем материал без текстуры в случае ошибки
+          if (THREE.MeshStandardMaterial) {
+            customMaterial = new THREE.MeshStandardMaterial({
+              color: 0x808080
+            });
+          } else {
+            console.error('THREE.MeshStandardMaterial не доступен');
+          }
+        }
+      );
+      
+      // Проверяем, что THREE.MeshStandardMaterial доступен
+      if (!THREE.MeshStandardMaterial) {
+        console.error('THREE.MeshStandardMaterial не доступен');
+        return;
+      }
+      
       customMaterial = new THREE.MeshStandardMaterial({
         map: baseTexture,
+        roughness: 0.5,
+        metalness: 0.1
       });
 
 
@@ -1923,6 +2549,32 @@ useEffect(() => {
             try {
                 const gltf = await gltfLoader.loadAsync(npc.model);
                 const model = gltf.scene;
+                
+                // Проверяем и исправляем материалы модели
+                model.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(mat => {
+                                if (!mat || !mat.isMaterial) {
+                                    console.warn(`Неправильный материал в ${npc.id}, заменяем на стандартный`);
+                                    if (THREE.MeshStandardMaterial) {
+                                        child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                                    } else {
+                                        console.error('THREE.MeshStandardMaterial не доступен для замены материала');
+                                    }
+                                }
+                            });
+                        } else if (!child.material.isMaterial) {
+                            console.warn(`Неправильный материал в ${npc.id}, заменяем на стандартный`);
+                            if (THREE.MeshStandardMaterial) {
+                                child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                            } else {
+                                console.error('THREE.MeshStandardMaterial не доступен для замены материала');
+                            }
+                        }
+                    }
+                });
+                
                 model.position.set(...npc.position);
                 model.userData.npcId = npc.id;
                 model.userData.isNpc = true;
@@ -2000,20 +2652,28 @@ useEffect(() => {
       renderer.domElement.addEventListener('mousemove', onMouseLookMove);
 
       try {
-        const gltf = await loadPlayerModel(avatarUrl);
+        // Проверяем, что avatarUrl существует и валиден
+        let modelUrl = avatarUrl;
+        if (!avatarUrl || avatarUrl === 'undefined' || avatarUrl === 'null') {
+          console.warn('avatarUrl не определен, используем fallback модель');
+          modelUrl = '/models/character.glb';
+        }
+        
+        console.log('Загружаем модель игрока:', modelUrl);
+        const gltf = await loadPlayerModel(modelUrl);
         player = gltf.scene;
         scene.add(player);
         playerRef.current = player;
         player.scale.set(1, 1, 1);
-        const profPos = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-        const startX = Number(profPos.last_pos_x ?? 0);
-        const startZ = Number(profPos.last_pos_z ?? 0);
-        player.position.set(startX, 0, startZ);
+        player.position.set(0, 0, 0);
 
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         const myName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
 
-        setMountRef(myName);
+        // Устанавливаем имя игрока в mountRef для отладки
+        if (mountRef.current) {
+          mountRef.current.setAttribute('data-player-name', myName);
+        }
 
         const nameLabel = createPlayerLabel(myName);
         nameLabel.position.set(0, 2.2, 0);
@@ -2031,9 +2691,17 @@ useEffect(() => {
           isFemale ? 'F_Walk_002.glb' : 'M_Walk_001.glb'
         }`;
 
+        console.log('Загружаем анимации:', { idlePath, walkPath });
+        
         const [idleGltf, walkGltf] = await Promise.all([
-          animLoader.loadAsync(idlePath),
-          animLoader.loadAsync(walkPath)
+          animLoader.loadAsync(idlePath).catch(err => {
+            console.error('Ошибка загрузки idle анимации:', err);
+            throw err;
+          }),
+          animLoader.loadAsync(walkPath).catch(err => {
+            console.error('Ошибка загрузки walk анимации:', err);
+            throw err;
+          })
         ]);
 
         idleGltf.animations.forEach(stripPositionTracks);
@@ -2041,6 +2709,19 @@ useEffect(() => {
 
         console.log('Idle GLB анимации:', idleGltf.animations);
         console.log('Walk GLB анимации:', walkGltf.animations);
+
+        // Проверяем, что анимации загружены
+        if (idleGltf.animations.length === 0) {
+          console.warn('Idle анимации не найдены, создаем пустую анимацию');
+          const emptyClip = new THREE.AnimationClip('idle', 1, []);
+          idleGltf.animations.push(emptyClip);
+        }
+        
+        if (walkGltf.animations.length === 0) {
+          console.warn('Walk анимации не найдены, создаем пустую анимацию');
+          const emptyClip = new THREE.AnimationClip('walk', 1, []);
+          walkGltf.animations.push(emptyClip);
+        }
 
         idleAction = mixer.clipAction(idleGltf.animations[0], player);
         walkAction = mixer.clipAction(walkGltf.animations[0], player);
@@ -2063,6 +2744,59 @@ useEffect(() => {
         });
       } catch (err) {
         console.error("Ошибка загрузки модели игрока:", err);
+        console.error("Детали ошибки:", {
+          avatarUrl,
+          gender,
+          error: err.message,
+          stack: err.stack
+        });
+        
+        // Создаем простую модель-заглушку в случае ошибки
+        console.log("Создаем fallback модель для игрока");
+        
+        // Пробуем загрузить локальную модель
+        try {
+          const fallbackGltf = await loadPlayerModel('/models/character.glb');
+          player = fallbackGltf.scene;
+          console.log("Fallback модель загружена успешно");
+        } catch (fallbackErr) {
+          console.error("Ошибка загрузки fallback модели:", fallbackErr);
+          
+          // Создаем простую геометрию
+          const fallbackGeometry = new THREE.BoxGeometry(1, 2, 1);
+          const fallbackMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+          player = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+          console.log("Создана простая модель-заглушка");
+        }
+        
+        scene.add(player);
+        playerRef.current = player;
+        player.scale.set(1, 1, 1);
+        player.position.set(0, 0, 0);
+        
+        // Создаем простые анимации для fallback
+        mixer = new THREE.AnimationMixer(player);
+        const emptyIdleClip = new THREE.AnimationClip('idle', 1, []);
+        const emptyWalkClip = new THREE.AnimationClip('walk', 1, []);
+        
+        idleAction = mixer.clipAction(emptyIdleClip, player);
+        walkAction = mixer.clipAction(emptyWalkClip, player);
+        
+        idleAction.play();
+        currentAction = idleAction;
+        
+        updateCameraFollow();
+        
+        // Отправляем данные о новом игроке
+        const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+        socketRef.current?.emit('newPlayer', {
+          x: player.position.x,
+          z: player.position.z,
+          avatarURL: avatarUrl || '/models/character.glb',
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          userId: profile.id
+        });
       }
     }
 
@@ -2132,10 +2866,35 @@ useEffect(() => {
     }
 
     function loadCityObject(obj) {
+      console.log('loadCityObject вызвана для объекта:', { 
+        id: obj.id, 
+        name: obj.name, 
+        textures: obj.textures,
+        model_url: obj.model_url 
+      });
+      
       gltfLoader.load(
         obj.model_url,
         (gltf) => {
           const model = gltf.scene;
+          
+          // Проверяем и исправляем материалы модели
+          model.traverse((child) => {
+              if (child.isMesh && child.material) {
+                  if (Array.isArray(child.material)) {
+                      child.material.forEach(mat => {
+                          if (!mat || !mat.isMaterial) {
+                              console.warn(`Неправильный материал в объекте ${obj.name}, заменяем на стандартный`);
+                              child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                          }
+                      });
+                  } else if (!child.material.isMaterial) {
+                      console.warn(`Неправильный материал в объекте ${obj.name}, заменяем на стандартный`);
+                      child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                  }
+              }
+          });
+          
           model.userData = {
             id: obj.id,
             type: obj.name,
@@ -2143,15 +2902,55 @@ useEffect(() => {
             rent: obj.rent,
             tax: obj.tax
           };
-          model.scale.set(1, 1, 1);
+          // Применяем масштаб из БД, если есть
+          const sx = (obj.scale_x ?? 1) || 1;
+          const sy = (obj.scale_y ?? 1) || 1;
+          const sz = (obj.scale_z ?? 1) || 1;
+          model.scale.set(sx, sy, sz);
           model.position.set(obj.pos_x, obj.pos_y, obj.pos_z);
           model.rotation.set(obj.rot_x, obj.rot_y, obj.rot_z);
+          
+          console.log('Обрабатываем материалы для объекта:', obj.name);
+          
+          // Обрабатываем материалы в зависимости от поля textures
           model.traverse(child => {
             if (child.isMesh) {
-              child.material = customMaterial.clone();
-              child.material.needsUpdate = true;
+              console.log('Найден меш в объекте:', obj.name, { 
+                hasMaterial: !!child.material,
+                materialType: child.material ? child.material.type : 'none'
+              });
+              
+              // Сохраняем оригинальные материалы для интерьеров
+              if (obj.name && obj.name.toLowerCase().includes('interior')) {
+                console.log('Объект интерьера - оставляем оригинальные материалы');
+                // Для интерьеров оставляем оригинальные материалы
+                if (child.material) {
+                  child.material.needsUpdate = true;
+                }
+              } else {
+                              // Проверяем поле textures
+              if (obj.textures && obj.textures !== '-') {
+                console.log('Загружаем текстурпак для объекта:', obj.name, 'текстурпак:', obj.textures);
+                
+                // Для citypack.json используем тот же принцип, что в MapEditor: единый стандартный материал с baseColor
+                if (obj.textures === '/packs/citypack.json') {
+                  // Присваиваем клон стандартного материала с базовой текстурой из пака
+                  const forceReplace = true;
+                  loadTexturePackForMesh(obj.textures, child, forceReplace);
+                } else {
+                  loadTexturePackForMesh(obj.textures, child);
+                }
+              } else {
+                console.log('Оставляем встроенные текстуры для объекта:', obj.name);
+                // Если textures = '-' или не указано, оставляем встроенные текстуры
+                if (child.material) {
+                  child.material.needsUpdate = true;
+                }
+              }
+              }
             }
           });
+          
           scene.add(model);
           cityMeshesRef.current.push(model);
           const boundingBox = new THREE.Box3().setFromObject(model);
@@ -2178,20 +2977,51 @@ useEffect(() => {
       buildPathfindingGrid();
     }
 
+    // Кэш для оптимизации вычислений расстояний
+    let lastPlayerPosition = null;
+    let lastVisibilityUpdate = 0;
+    
     function updateCityObjectVisibility() {
       if (!player) return;
+      
       const p = player.position;
+      const now = Date.now();
+      
+      // Проверяем, изменилась ли позиция игрока значительно
+      if (lastPlayerPosition && 
+          Math.abs(lastPlayerPosition.x - p.x) < 5 && 
+          Math.abs(lastPlayerPosition.z - p.z) < 5 &&
+          now - lastVisibilityUpdate < 1000) {
+        return; // Пропускаем обновление, если игрок не двигался значительно
+      }
+      
+      lastPlayerPosition = p.clone();
+      lastVisibilityUpdate = now;
+      
+      // Оптимизированные вычисления расстояний
+      const loadRadiusSq = LOAD_RADIUS * LOAD_RADIUS;
+      
       cityObjectsDataRef.current.forEach(obj => {
-        const dist = Math.hypot(obj.pos_x - p.x, obj.pos_z - p.z);
-        if (dist <= LOAD_RADIUS) {
-          if (!loadedCityObjectsRef.current[obj.id]) loadCityObject(obj);
+        const dx = obj.pos_x - p.x;
+        const dz = obj.pos_z - p.z;
+        const distSq = dx * dx + dz * dz; // Используем квадрат расстояния для избежания sqrt
+        
+        if (distSq <= loadRadiusSq) {
+          if (!loadedCityObjectsRef.current[obj.id]) {
+            console.log('Загружаем объект:', { id: obj.id, name: obj.name, textures: obj.textures });
+            loadCityObject(obj);
+          }
         } else {
           if (loadedCityObjectsRef.current[obj.id]) unloadCityObject(obj.id);
         }
       });
+      
       interiorsDataRef.current.forEach(int => {
-        const dist = Math.hypot(int.pos_x - p.x, int.pos_z - p.z);
-        if (dist <= LOAD_RADIUS) {
+        const dx = int.pos_x - p.x;
+        const dz = int.pos_z - p.z;
+        const distSq = dx * dx + dz * dz;
+        
+        if (distSq <= loadRadiusSq) {
           if (!loadedInteriorMeshesRef.current[int.id]) loadInteriorPlaceholder(int);
         } else if (loadedInteriorMeshesRef.current[int.id]) {
           unloadInteriorPlaceholder(int.id);
@@ -2261,7 +3091,8 @@ useEffect(() => {
             return;
           }
           if (obj && obj.userData.interiorId) {
-            await loadInteriorScene(obj.userData.interiorId);
+            console.log('Клик по интерьеру:', obj.userData.interiorId);
+            await enterInteriorMode(obj.userData.interiorId);
             return;
           }
         }
@@ -2317,20 +3148,38 @@ useEffect(() => {
 
     function onKeyDown(event) {
       keys[event.key] = true;
+      
+      console.log('onKeyDown:', event.key, 'isInInteriorRef.current:', isInInteriorRef.current);
+      
+      // Обработка клавиши Escape для выхода из интерьера
+      if (event.key === 'Escape' && isInInteriorRef.current) {
+        console.log('Escape нажата - выходим из интерьера');
+        exitInterior();
+        return;
+      }
+      
       if (isInInteriorRef.current) {
+        console.log('Обрабатываем клавишу в интерьере:', event.key);
         const k = event.key.toLowerCase();
         if (k === 'arrowup' || k === 'w') startMove('forward');
         if (k === 'arrowdown' || k === 's') startMove('backward');
         if (k === 'arrowleft' || k === 'a') startMove('left');
         if (k === 'arrowright' || k === 'd') startMove('right');
+        if (k === 'q') startMove('strafeLeft');
+        if (k === 'e') startMove('strafeRight');
       }
+      
       if (event.key.toLowerCase() === 'i') {
         const prof = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         socket.emit('economy:getInventory', { userId: prof.id });
         setShowInventory(v => !v);
       }
-      destination = null;
-      destinationMarker.visible = false;
+      
+      // Сбрасываем назначение только если не в интерьере
+      if (!isInInteriorRef.current) {
+        destination = null;
+        destinationMarker.visible = false;
+      }
     }
 
     function onKeyUp(event) {
@@ -2341,30 +3190,45 @@ useEffect(() => {
         if (k === 'arrowdown' || k === 's') stopMove('backward');
         if (k === 'arrowleft' || k === 'a') stopMove('left');
         if (k === 'arrowright' || k === 'd') stopMove('right');
+        if (k === 'q') stopMove('strafeLeft');
+        if (k === 'e') stopMove('strafeRight');
       }
     }
 
     function createPlayerLabel(text) {
       const canvas = document.createElement('canvas');
-      canvas.width = 256;
-      canvas.height = 64;
+      canvas.width = 512; // Увеличиваем размер canvas
+      canvas.height = 128;
       const ctx = canvas.getContext('2d');
 
-      const fontSize = 15;
+      // Добавляем фон для лучшей видимости
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const fontSize = 32; // Увеличиваем размер шрифта
       ctx.fillStyle = 'white';
-      ctx.font = `${fontSize}px Arial`;
+      ctx.font = `bold ${fontSize}px Arial`;
 
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
+      // Добавляем обводку для лучшей видимости
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2;
+      ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
       ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
 
-      const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+      const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        depthTest: false, // Рисуем поверх всего
+        depthWrite: false
+      });
       const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.scale.set(0.5, 0.5, 1);
+      sprite.scale.set(1, 0.25, 1); // Увеличиваем размер спрайта
 
       // ↓↓↓ добавь это ↓↓↓
       sprite.raycast = () => {};
@@ -2376,9 +3240,22 @@ useEffect(() => {
     function switchAnimation(newAction) {
       if (!newAction || !currentAction || newAction === currentAction) return;
 
-      currentAction.fadeOut(0.2);
-      newAction.reset().fadeIn(0.2).play();
+      // Увеличиваем время перехода для более плавной анимации
+      const fadeTime = 0.3;
+      
+      // Плавно убираем текущую анимацию
+      currentAction.fadeOut(fadeTime);
+      
+      // Плавно включаем новую анимацию
+      newAction.reset().fadeIn(fadeTime).play();
+      
+      // Обновляем текущую анимацию
       currentAction = newAction;
+      
+      // Синхронизируем время для избежания подлагов
+      if (newAction === walkAction) {
+        newAction.time = 0;
+      }
     }
 
     function canMove(newPosition) {
@@ -2514,13 +3391,27 @@ useEffect(() => {
 
     function updateTransparency() {
       if (!player) return;
+      
+      // Если мы в интерьере, не применяем прозрачность
+      if (isInInteriorRef.current) return;
+      
       obstacles.forEach(obstacle => {
         obstacle.mesh.traverse(child => {
           if (child.isMesh && child.material) {
-            child.material.transparent = false;
-            child.material.opacity = 1.0;
-            child.material.depthWrite = true;
-            child.material.needsUpdate = true;
+            if (Array.isArray(child.material)) {
+              child.material.forEach(mat => {
+                if (!mat) return;
+                mat.transparent = false;
+                mat.opacity = 1.0;
+                mat.depthWrite = true;
+                mat.needsUpdate = true;
+              });
+            } else {
+              child.material.transparent = false;
+              child.material.opacity = 1.0;
+              child.material.depthWrite = true;
+              child.material.needsUpdate = true;
+            }
           }
         });
       });
@@ -2543,18 +3434,38 @@ useEffect(() => {
         if (hit.distance < camToPlayerDist) {
           if (hit.object.parent === scene) {
             if (hit.object.isMesh && hit.object.material) {
-              hit.object.material.transparent = true;
-              hit.object.material.opacity = 0.3;
-              hit.object.material.depthWrite = false;
-              hit.object.material.needsUpdate = true;
+              if (Array.isArray(hit.object.material)) {
+                hit.object.material.forEach(mat => {
+                  if (!mat) return;
+                  mat.transparent = true;
+                  mat.opacity = 0.3;
+                  mat.depthWrite = false;
+                  mat.needsUpdate = true;
+                });
+              } else {
+                hit.object.material.transparent = true;
+                hit.object.material.opacity = 0.3;
+                hit.object.material.depthWrite = false;
+                hit.object.material.needsUpdate = true;
+              }
             }
           } else {
             hit.object.parent.traverse(child => {
               if (child.isMesh && child.material) {
-                child.material.transparent = true;
-                child.material.opacity = 0.3;
-                child.material.depthWrite = false;
-                child.material.needsUpdate = true;
+                if (Array.isArray(child.material)) {
+                  child.material.forEach(mat => {
+                    if (!mat) return;
+                    mat.transparent = true;
+                    mat.opacity = 0.3;
+                    mat.depthWrite = false;
+                    mat.needsUpdate = true;
+                  });
+                } else {
+                  child.material.transparent = true;
+                  child.material.opacity = 0.3;
+                  child.material.depthWrite = false;
+                  child.material.needsUpdate = true;
+                }
               }
             });
           }
@@ -2564,14 +3475,24 @@ useEffect(() => {
 
     function updateFirstPersonMovement(delta) {
       if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !player) return;
+      
       const move = moveInputRef.current;
-      const speed = 3;
-      const rot = Math.PI;
-      if (move.left) player.rotation.y += rot * delta;
-      if (move.right) player.rotation.y -= rot * delta;
+      const speed = 2; // Уменьшаем скорость для более плавного движения в интерьере
+      const rotSpeed = Math.PI * 0.5; // Уменьшаем скорость поворота
+      
+      // Поворот влево-вправо (A/D или стрелки)
+      if (move.left) player.rotation.y += rotSpeed * delta;
+      if (move.right) player.rotation.y -= rotSpeed * delta;
+      
+      // Движение вперед-назад (W/S или стрелки)
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
       if (move.forward) player.position.addScaledVector(forward, speed * delta);
       if (move.backward) player.position.addScaledVector(forward, -speed * delta);
+      
+      // Боковое движение (Q/E для strafe, если нужно)
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
+      if (move.strafeLeft) player.position.addScaledVector(right, -speed * delta);
+      if (move.strafeRight) player.position.addScaledVector(right, speed * delta);
     }
 
     function updateCameraFollow() {
@@ -2591,39 +3512,93 @@ useEffect(() => {
       }
 
       const polar = basePolar + cameraPitchOffset;
-
       const planar = radius * Math.cos(polar);
       const yOff = radius * Math.sin(polar);
-
       const xOff = planar * Math.cos(baseAzimuth);
       const zOff = planar * Math.sin(baseAzimuth);
 
-      cameraRef.current.position.set(
+      // Плавная интерполяция позиции камеры
+      const targetPosition = new THREE.Vector3(
         target.x + xOff,
         target.y + yOff,
         target.z + zOff
       );
-
+      
+      cameraRef.current.position.lerp(targetPosition, 0.1);
       cameraRef.current.lookAt(target);
     }
 
     function animate() {
       requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      updateDestinationMovement(delta);
-      updateFirstPersonMovement(delta);
-      if (mixer) mixer.update(delta);
-      updateTransparency();
-      updateCityObjectVisibility();
-      updateCameraFollow();
-      for (let id in remotePlayers) {
-        const r = remotePlayers[id];
-        if (r.targetPosition) {
-          r.model.position.lerp(r.targetPosition, 0.1);
-        }
-        r.mixer.update(delta);
+      
+      // Проверяем, что все необходимые объекты инициализированы
+      if (!renderer || !scene || !cameraRef.current) {
+        console.warn('Пропускаем анимацию - не все объекты инициализированы');
+        return;
       }
-      renderer.render(scene, cameraRef.current);
+      
+      if (!clock || typeof clock.getDelta !== 'function') {
+        console.warn('Clock не инициализирован');
+        return;
+      }
+      const delta = Math.min(clock.getDelta(), 0.1); // Ограничиваем delta для стабильности
+      
+      // Обновляем анимации
+      if (mixer && typeof mixer.update === 'function') {
+        mixer.update(delta);
+      }
+      
+      // Обновляем движение игрока
+      if (typeof updateDestinationMovement === 'function') {
+        updateDestinationMovement(delta);
+      }
+      if (typeof updateFirstPersonMovement === 'function') {
+        updateFirstPersonMovement(delta);
+      }
+      
+      // Обновляем других игроков
+      if (remotePlayers) {
+        for (let id in remotePlayers) {
+          const r = remotePlayers[id];
+          if (r && r.model && r.targetPosition) {
+            r.model.position.lerp(r.targetPosition, 0.15); // Увеличиваем скорость интерполяции
+          }
+          if (r && r.mixer && typeof r.mixer.update === 'function') {
+            r.mixer.update(delta);
+          }
+        }
+      }
+      
+      // Обновляем прозрачность и видимость объектов (реже)
+      if (Math.floor(Date.now() / 100) % 3 === 0) {
+        if (typeof updateTransparency === 'function') {
+          updateTransparency();
+        }
+        if (typeof updateCityObjectVisibility === 'function') {
+          updateCityObjectVisibility();
+        }
+      }
+      
+      // Обновляем камеру
+      if (typeof updateCameraFollow === 'function') {
+        updateCameraFollow();
+      }
+      
+      // Рендерим сцену
+      if (renderer && scene && cameraRef.current) {
+        try {
+          renderer.render(scene, cameraRef.current);
+        } catch (error) {
+          console.error('Ошибка рендеринга:', error);
+          // Не освобождаем материалы здесь, чтобы не усугублять ошибку на следующих кадрах
+        }
+      } else {
+        console.warn('Renderer, scene или camera не инициализированы:', {
+          renderer: !!renderer,
+          scene: !!scene,
+          camera: !!cameraRef.current
+        });
+      }
     }
 
     (async () => {
@@ -2644,17 +3619,33 @@ useEffect(() => {
         fpCamRef.current.aspect = aspect;
         fpCamRef.current.updateProjectionMatrix();
       }
-      rendererRef.current.setSize(window.innerWidth, window.innerHeight);
+      if (rendererRef.current) {
+        rendererRef.current.setSize(window.innerWidth, window.innerHeight);
+      }
     }
     window.addEventListener('resize', onWindowResize, false);
 
     return () => {
       clearInterval(balanceInterval);
+      
+      // Очищаем таймеры throttling
+      if (wheelTimeout) {
+        clearTimeout(wheelTimeout);
+        wheelTimeout = null;
+      }
+      if (mouseMoveTimeout) {
+        clearTimeout(mouseMoveTimeout);
+        mouseMoveTimeout = null;
+      }
+      
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
-      renderer.domElement.removeEventListener('wheel', onMouseWheel);
-      renderer.domElement.removeEventListener('mousemove', onMouseLookMove);
+      if (renderer && renderer.domElement) {
+        renderer.domElement.removeEventListener('pointerdown', onDocumentMouseDown);
+        renderer.domElement.removeEventListener('wheel', onMouseWheel);
+        renderer.domElement.removeEventListener('mousemove', onMouseLookMove);
+      }
+      document.removeEventListener('pointerlockchange');
       window.removeEventListener('resize', onWindowResize);
       if (renderer && renderer.domElement && renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
@@ -2839,7 +3830,7 @@ useEffect(() => {
           zIndex: 1000
         }}>
           <button
-            onClick={() => enterInterior(selectedHouse.id)}
+            onClick={() => enterInteriorMode(selectedHouse.id)}
             style={{
               fontSize: '18px',
               padding: '8px 16px',
@@ -2936,7 +3927,7 @@ useEffect(() => {
             <b>Налог:</b> {selectedHouse.tax}
           </p>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button onClick={() => enterInterior(selectedHouse.id)} style={btnStyle}>Войти</button>
+              <button onClick={() => enterHouse(selectedHouse)} style={btnStyle}>Войти</button>
             <button onClick={() => viewStats(selectedHouse)} style={btnStyle}>Статистика</button>
             {selectedHouse.organizationId && (
               <>

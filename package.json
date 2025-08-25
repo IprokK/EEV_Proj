@@ -21,11 +21,14 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.6.1",
     "three": "0.166.1",
-    "wavesurfer.js": "^7.10.1"
+    "wavesurfer.js": "^7.10.1",
+    "concurrently": "^8.2.2"
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "server": "node server.js",
+    "dev": "concurrently \"npm run server\" \"npm run start\""
   },
   "overrides": {
     "nth-check": "^2.0.1",
