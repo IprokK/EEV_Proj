@@ -24,11 +24,15 @@ function Game({ avatarUrl, gender }) {
 
   // 3) реф для группы «интерьера»
   const interiorGroupRef = useRef(null);
+  const interiorCollidersRef = useRef([]);
+  const interiorExitPosRef = useRef(null);
+  const fpHiddenNodesRef = useRef([]);
   const cleanupTimerRef = useRef(null);
   // Глобальный менеджер прогресса загрузки (используем в GLTFLoader)
   const loadingManagerRef = useRef(null);
   // Кликабельные объекты внутри интерьера
   const interiorInteractablesRef = useRef([]);
+  const npcMeshesRef = useRef([]);
 
   // камеры
   const orthoCamRef = useRef(null);
@@ -39,6 +43,7 @@ function Game({ avatarUrl, gender }) {
   const fpPitchRef = useRef(0);
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const isInInteriorRef = useRef(false);
+  const altHeldRef = useRef(false);
   const LOAD_RADIUS = 120;
 
   const [activeApp, setActiveApp] = useState(null);
@@ -111,6 +116,8 @@ function Game({ avatarUrl, gender }) {
 
     const [seregaComments, setSeregaComments] = useState([]);
     const [currentExit, setCurrentExit] = useState(null);
+    const currentExitRef = useRef(null);
+    useEffect(() => { currentExitRef.current = currentExit; }, [currentExit]);
 
   useEffect(() => {
     const decay = setInterval(() => {
@@ -496,7 +503,7 @@ function Game({ avatarUrl, gender }) {
     // базовая геометрия для объектов типа "chair"
     const baseChairMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x888888 })
+      new THREE.MeshBasicMaterial({ visible: false })
     );
 
     async function loadGLTF(url) {
@@ -522,10 +529,8 @@ function Game({ avatarUrl, gender }) {
       switchToFirstPersonCamera();
       
       // Включаем управление мышью для интерьера
-      document.body.style.cursor = 'none'; // Скрываем курсор
-      if (rendererRef.current) {
-        rendererRef.current.domElement.requestPointerLock();
-      }
+      // Курсор оставляем активным (без pointer lock)
+      document.body.style.cursor = 'default';
       
       // Устанавливаем состояние "в интерьере"
       console.log('Устанавливаем setIsInInterior(true)');
@@ -533,10 +538,26 @@ function Game({ avatarUrl, gender }) {
       setSelectedHouse(null);
       
       console.log('isInInterior установлен в true');
+      // Сброс кликово-путевого движения и визуальных маркеров
+      if (typeof currentPath !== 'undefined') currentPath = [];
+      if (typeof pathIndex !== 'undefined') pathIndex = 0;
+      if (typeof destination !== 'undefined') destination = null;
+      if (typeof blockedTime !== 'undefined') blockedTime = 0;
+      if (typeof destinationMarker !== 'undefined' && destinationMarker) destinationMarker.visible = false;
+      // Сброс нажатых направлений
+      if (moveInputRef.current) {
+        Object.keys(moveInputRef.current).forEach(k => { moveInputRef.current[k] = false; });
+      }
       
       // Телепортируем игрока в интерьер (если нужно)
       console.log('Вызываем teleportPlayerToInterior для интерьера:', interiorId);
       await teleportPlayerToInterior(interiorId);
+      // Отправляем мгновенное обновление позиции перед уведомлением об интерьере
+      if (socketRef.current && playerRef.current) {
+        socketRef.current.emit('playerMovement', { x: playerRef.current.position.x, y: playerRef.current.position.y, z: playerRef.current.position.z });
+      }
+      // Сообщаем серверу о смене интерьера, чтобы видимость игроков фильтровалась по interiorId
+      socketRef.current?.emit('interiorChange', { interiorId });
       console.log('teleportPlayerToInterior завершена');
     }
     const teleportPlayerToInterior = async (interiorId) => {
@@ -560,21 +581,54 @@ function Game({ avatarUrl, gender }) {
           alert(`Не удалось получить координаты интерьера: ${errText}`);
           return;
         }
-        const { spawn, exit } = await res.json();
+        const { spawn, exit, exitInt } = await res.json();
         if (!spawn) {
           alert('Для этого интерьера не заданы координаты входа');
           return;
         }
+        // Нормализуем типы в числа (pg для NUMERIC отдает строки)
+        const nSpawn = {
+          x: Number(spawn.x),
+          y: Number(spawn.y),
+          z: Number(spawn.z),
+          rot: Number(spawn.rot) || 0
+        };
+        const nExit = exit && typeof exit === 'object' ? {
+          x: Number(exit.x),
+          y: Number(exit.y),
+          z: Number(exit.z),
+          rot: Number(exit.rot) || 0
+        } : null;
+        const nExitInt = exitInt && typeof exitInt === 'object' ? {
+          x: Number(exitInt.x),
+          y: Number(exitInt.y),
+          z: Number(exitInt.z)
+        } : null;
         // Телепортируем игрока в интерьер
         if (playerRef.current) {
-          playerRef.current.position.set(spawn.x, spawn.y, spawn.z);
-          playerRef.current.rotation.set(0, spawn.rot || 0, 0);
-          // Можно добавить сброс скорости, анимации и т.д. при необходимости
+          console.log('[ENTER INTERIOR] spawn from server:', nSpawn);
+          playerRef.current.position.set(nSpawn.x, nSpawn.y, nSpawn.z);
+          playerRef.current.rotation.set(0, nSpawn.rot || 0, 0);
+          // Полный сброс движения/целей при входе
+          if (typeof currentPath !== 'undefined') currentPath = [];
+          if (typeof pathIndex !== 'undefined') pathIndex = 0;
+          if (typeof destination !== 'undefined') destination = null;
+          if (typeof blockedTime !== 'undefined') blockedTime = 0;
+          if (typeof destinationMarker !== 'undefined' && destinationMarker) destinationMarker.visible = false;
+          if (moveInputRef.current) {
+            Object.keys(moveInputRef.current).forEach(k => { moveInputRef.current[k] = false; });
+          }
         }
-        setCurrentExit(exit || null);
-        // Добавляем маркер выхода
-        if (exit) {
-          addExitMarker(exit);
+        console.log('[ENTER INTERIOR] exit from server:', nExit);
+        setCurrentExit(nExit || null);
+        // Визуализируем маркер выхода внутри интерьера, чтобы по клику можно было выйти
+        if (nExit && typeof nExit.x === 'number' && typeof nExit.z === 'number') {
+          try { addExitMarker(nExit); } catch (e) { console.warn('[ENTER INTERIOR] addExitMarker failed', e); }
+        }
+        // Запоминаем позицию внутреннего триггера выхода, если пришла
+        if (nExitInt && typeof nExitInt.x === 'number') {
+          console.log('[ENTER INTERIOR] exitInt (internal exit trigger):', nExitInt);
+          interiorExitPosRef.current = new THREE.Vector3(nExitInt.x, nExitInt.y || 0, nExitInt.z);
         }
         console.log('teleportPlayerToInterior завершена успешно');
       } catch (e) {
@@ -619,8 +673,53 @@ function Game({ avatarUrl, gender }) {
         intGroup.name = 'interiorGroup';
         intGroup.add(gltf.scene);
 
+        // Декуплируем и гарантируем непрозрачность материалов интерьера
+        gltf.scene.traverse((child) => {
+          if (child.isMesh && child.material) {
+            if (Array.isArray(child.material)) {
+              child.material = child.material.map(mat => {
+                if (!mat) return mat;
+                const m = mat.clone();
+                m.transparent = false;
+                m.opacity = 1;
+                m.depthWrite = true;
+                m.needsUpdate = true;
+                return m;
+              });
+            } else {
+              child.material = child.material.clone();
+              child.material.transparent = false;
+              child.material.opacity = 1;
+              child.material.depthWrite = true;
+              child.material.needsUpdate = true;
+            }
+          }
+        });
+
+        // Построение коллайдеров интерьера (простые коробки по мешам)
+        const colliders = [];
+        gltf.scene.traverse((child) => {
+          if (child.isMesh && child.geometry) {
+            colliders.push(child);
+          }
+        });
+        interiorCollidersRef.current = colliders;
+
         // Добавляем объекты интерьера
         interiorInteractablesRef.current = []; // сбрасываем реестр интерактива
+
+        // Хелпер для определения ID NPC по пути к модели
+        const getNpcIdFromModel = (url) => {
+          if (!url || typeof url !== 'string') return null;
+          const lower = url.toLowerCase();
+          if (lower.includes('/models/npc/galina.glb')) return 'Adventurer';
+          if (lower.includes('/models/npc/oxranik.glb')) return 'Oxranik';
+          if (lower.includes('/models/npc/guard.glb')) return 'guard';
+          if (lower.includes('/models/npc/beachcharacter.glb')) return 'BeachCharacter';
+          if (lower.includes('/models/npc/bartender.glb')) return 'bartender';
+          if (lower.includes('/models/npc/computer.glb')) return 'Computer';
+          return null;
+        };
 
         for (const o of objects) {
           if (o.model_url) {
@@ -630,6 +729,34 @@ function Game({ avatarUrl, gender }) {
               objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
               objGltf.scene.scale.set(o.scale, o.scale, o.scale);
               intGroup.add(objGltf.scene);
+
+              // Если это NPC внутри интерьера — добавим кликабельную хит‑зону
+              const isNpc = (o.type === 'npc') || (typeof o.model_url === 'string' && o.model_url.includes('/models/npc/'));
+              if (isNpc) {
+                const npcId = o.id || getNpcIdFromModel(o.model_url);
+                console.log('[INTERIOR NPC] detected npc, id:', npcId, 'at', { x: o.x, y: o.y, z: o.z });
+                const hit = new THREE.Mesh(
+                  new THREE.SphereGeometry(1.2),
+                  new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.0001, depthWrite: false })
+                );
+                hit.position.set(o.x, (o.y ?? 0) + 1.0, o.z);
+                hit.userData.interactable = true;
+                hit.userData.payload = { type: 'npc', id: npcId };
+                hit.visible = true;
+                intGroup.add(hit);
+                interiorInteractablesRef.current.push(hit);
+
+                // Также помечаем сам корень модели как кликабельный NPC
+                try {
+                  objGltf.scene.userData = objGltf.scene.userData || {};
+                  objGltf.scene.userData.interactable = true;
+                  objGltf.scene.userData.payload = { type: 'npc', id: npcId };
+                  interiorInteractablesRef.current.push(objGltf.scene);
+                  // и помечаем как isNpc/npcId для fallback
+                  objGltf.scene.userData.isNpc = true;
+                  objGltf.scene.userData.npcId = npcId;
+                } catch (_) {}
+              }
             } catch (e) {
               console.warn('Не удалось загрузить объект интерьера', o.model_url, e);
             }
@@ -638,20 +765,44 @@ function Game({ avatarUrl, gender }) {
             mesh.position.set(o.x, o.y, o.z);
             mesh.rotation.set(o.rot_x, o.rot_y, o.rot_z);
             mesh.scale.set(o.scale, o.scale, o.scale);
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) {
+                mesh.material = mesh.material.map(mat => {
+                  if (!mat) return mat;
+                  const m = mat.clone();
+                  m.transparent = false;
+                  m.opacity = 1;
+                  m.depthWrite = true;
+                  m.needsUpdate = true;
+                  return m;
+                });
+              } else {
+                mesh.material = mesh.material.clone();
+                mesh.material.transparent = false;
+                mesh.material.opacity = 1;
+                mesh.material.depthWrite = true;
+                mesh.material.needsUpdate = true;
+              }
+            }
             intGroup.add(mesh);
           }
           
-          // Если сервер прислал «маркер»/NPC — пометим кликабельным
+          // Если сервер пометил объект как «интерактивный/маркер» — кликабельная зона
           if (o.interactable || o.marker) {
             const hit = new THREE.Mesh(
               new THREE.SphereGeometry(0.6),
-              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, depthWrite: false })
+              new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.0001, depthWrite: false })
             );
             hit.position.set(o.x, o.y + 1.0, o.z);
             hit.userData.interactable = true;
             hit.userData.payload = { type: o.type || 'marker', id: o.id || null, label: o.label || 'Интерактив' };
+            hit.visible = true; // невидим визуально (opacity≈0), но кликабелен
             intGroup.add(hit);
             interiorInteractablesRef.current.push(hit);
+          }
+          // Сохраним позицию внутреннего выхода, если есть
+          if (typeof o.exit_int_x === 'number' && typeof o.exit_int_y === 'number' && typeof o.exit_int_z === 'number') {
+            interiorExitPosRef.current = new THREE.Vector3(o.exit_int_x, o.exit_int_y, o.exit_int_z);
           }
         }
 
@@ -931,9 +1082,32 @@ function Game({ avatarUrl, gender }) {
         const exitInterior = () => {
       console.log('exitInterior вызвана');
       
-      // Возвращаем игрока на исходную позицию (если не телепортировали)
-      if (playerRef.current && savedPositionRef.current) {
-        playerRef.current.position.copy(savedPositionRef.current);
+      // Телепортируем на координаты выхода из интерьера, если заданы; иначе возвращаем на сохранённую позицию
+      if (playerRef.current) {
+        const cx = currentExitRef.current;
+        console.log('[EXIT] currentExit before teleport:', cx);
+        if (cx && typeof cx.x === 'number') {
+          playerRef.current.position.set(
+            cx.x,
+            typeof cx.y === 'number' ? cx.y : playerRef.current.position.y,
+            cx.z
+          );
+          playerRef.current.rotation.set(0, cx.rot || 0, 0);
+          console.log('[EXIT] Teleported to exit coords');
+          // Гарантируем выход из интерьера на сервере
+          socketRef.current?.emit('interiorChange', { interiorId: null });
+          // Включаем мир (закрытие могло скрыть город)
+          try { toggleWorldVisibility(true); } catch (_) {}
+        } else if (savedPositionRef.current) {
+          console.log('[EXIT] No exit coords, using savedPositionRef');
+          playerRef.current.position.copy(savedPositionRef.current);
+        }
+        // Сразу шлём позицию наружу
+        socketRef.current?.emit('playerMovement', {
+          x: playerRef.current.position.x,
+          y: playerRef.current.position.y,
+          z: playerRef.current.position.z
+        });
       }
 
       // Удаляем маркер выхода, если был
@@ -955,6 +1129,39 @@ function Game({ avatarUrl, gender }) {
       if (typeof updateCityObjectVisibility === 'function') {
         updateCityObjectVisibility();
       }
+      // Повторно закрепляем телепорт на выход уже после очистки интерьера (на случай перезаписи позы)
+      if (playerRef.current) {
+        const cx2 = currentExitRef.current;
+        console.log('[EXIT AFTER CLEANUP] currentExit:', cx2);
+        if (cx2 && typeof cx2.x === 'number') {
+          playerRef.current.position.set(
+            cx2.x,
+            typeof cx2.y === 'number' ? cx2.y : playerRef.current.position.y,
+            cx2.z
+          );
+          playerRef.current.rotation.set(0, cx2.rot || 0, 0);
+          console.log('[EXIT AFTER CLEANUP] Position applied');
+        }
+        if (typeof lastPlayerPosition !== 'undefined') {
+          try { lastPlayerPosition = playerRef.current.position.clone(); } catch (_) {}
+        }
+        socketRef.current?.emit('playerMovement', {
+          x: playerRef.current.position.x,
+          y: playerRef.current.position.y,
+          z: playerRef.current.position.z
+        });
+      }
+      // Полный сброс путевого движения и ввода
+      if (typeof currentPath !== 'undefined') currentPath = [];
+      if (typeof pathIndex !== 'undefined') pathIndex = 0;
+      if (typeof destination !== 'undefined') destination = null;
+      if (typeof blockedTime !== 'undefined') blockedTime = 0;
+      if (typeof destinationMarker !== 'undefined' && destinationMarker) destinationMarker.visible = false;
+      if (moveInputRef.current) {
+        Object.keys(moveInputRef.current).forEach(k => { moveInputRef.current[k] = false; });
+      }
+      // Сообщаем серверу, что покинули интерьер
+      socketRef.current?.emit('interiorChange', { interiorId: null });
       
       // Возвращаем курсор и отключаем pointer lock
       document.body.style.cursor = 'default';
@@ -962,6 +1169,7 @@ function Game({ avatarUrl, gender }) {
 
       setIsInInterior(false);
       setCurrentExit(null);
+      interiorExitPosRef.current = null;
     };
 
 
@@ -1361,8 +1569,20 @@ function switchToFirstPersonCamera() {
     console.log('Камера переключена на fpCamRef');
   }
   if (playerRef.current) {
+    // Скрываем полностью собственную модель в режиме FPV
     playerRef.current.visible = false;
-    console.log('Игрок скрыт');
+    // На всякий случай также скрываем голову/шею (если модель будет вновь показана без выхода из режима)
+    const hidden = [];
+    playerRef.current.traverse((child) => {
+      if (!child.isMesh) return;
+      const name = (child.name || '').toLowerCase();
+      if (name.includes('head') || name.includes('neck') || name.includes('helmet') || name.includes('hair')) {
+        child.visible = false;
+        hidden.push(child);
+      }
+    });
+    fpHiddenNodesRef.current = hidden;
+    console.log('Скрыты узлы для FPV:', hidden.map(n => n.name));
   }
   fpPitchRef.current = 0;
   
@@ -1376,6 +1596,9 @@ function switchToFirstPersonCamera() {
       playerRef.current.position.y + headHeight,
       playerRef.current.position.z
     );
+    // Не большой сдвиг камеры вперёд, чтобы не упираться в скрытую голову
+    const forward = new THREE.Vector3(0, 0, -0.08).applyEuler(new THREE.Euler(0, playerRef.current.rotation.y, 0));
+    fpCamRef.current.position.add(forward);
     
     // Направляем камеру в том же направлении, что и игрок
     const direction = new THREE.Vector3(0, 0, -1);
@@ -1395,6 +1618,11 @@ function switchToThirdPersonCamera() {
   }
   if (playerRef.current) {
     playerRef.current.visible = true;
+    // Вернуть видимость скрытых для FPV узлов
+    if (Array.isArray(fpHiddenNodesRef.current)) {
+      fpHiddenNodesRef.current.forEach(n => { n.visible = true; });
+      fpHiddenNodesRef.current = [];
+    }
     console.log('Игрок показан');
   }
   fpPitchRef.current = 0;
@@ -1414,42 +1642,95 @@ function stopMove(dir) {
 // ─────────────────────────────────────────────────────
 useEffect(() => {
   const onClick = (e) => {
+    console.log('[INTERIOR CLICK] handler start; isInInterior:', isInInteriorRef.current);
     if (!isInInteriorRef.current) return;
     const mount = mountRef.current;
     if (!mount || !cameraRef.current) return;
 
     // координаты мыши в NDC
-    const rect = mount.getBoundingClientRect();
+    // Пытаемся получить координаты из элемента рендера (FP вид)
+    const canvas = rendererRef.current && rendererRef.current.domElement;
+    const rect = (canvas || mount).getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, cameraRef.current);
-    // Ищем пересечения по интерактивам
+    // Ищем пересечения по интерактивам (включая NPC)
     const objects = interiorInteractablesRef.current.filter(obj => obj?.isObject3D);
-    if (!objects.length) return;
-    const hits = raycaster.intersectObjects(objects, true)
-     .filter(h => h.object && h.object.userData && h.object.userData.interactable);
-    if (!hits.length) return;
-
+    // Добавим в список интерактивов саму группу интерьера, чтобы traverse детектил payload у вложенных узлов
+    const extraTargets = [];
+    if (interiorGroupRef.current) extraTargets.push(interiorGroupRef.current);
+    const rayHits = raycaster.intersectObjects(objects.concat(extraTargets), true);
+    console.log('[INTERIOR CLICK] rayHits count:', rayHits.length);
+    const hits = rayHits.filter(h => {
+      const obj = h.object;
+      // учитываем payload на мешах и на родителях
+      if (obj && obj.userData && (obj.userData.interactable || obj.userData.payload || obj.userData.isNpc)) return true;
+      let p = obj;
+      while (p && p.parent) {
+        p = p.parent;
+        if (p.userData && (p.userData.interactable || p.userData.payload || p.userData.isNpc)) return true;
+      }
+      return false;
+    });
+    console.log('[INTERIOR CLICK] interactable hits count:', hits.length);
+    if (hits.length) {
       const top = hits[0].object;
-      const payload = top.userData.payload || {};
-      // Дальше делай что нужно: диалог, меню, действие и т.п.
+      // поднимаем до узла, где лежит payload
+      let node = top;
+      while (node && !node.userData?.payload && node.parent) node = node.parent;
+      let payload = (node && node.userData && node.userData.payload) || (top.userData.payload) || {};
+      // Если у попавшего меша нет payload, но это часть NPC, поднимемся до isNpc
+      if ((!payload || !payload.type) && node) {
+        let p = node;
+        while (p && !p.userData?.isNpc && p.parent) p = p.parent;
+        if (p && p.userData?.npcId) {
+          payload = { type: 'npc', id: p.userData.npcId };
+        }
+      }
+      console.log('[INTERIOR CLICK] payload:', payload);
       if (payload.type === 'marker') {
         console.log('Нажат маркер:', payload);
-        // например, открыть окно диалога/описания
-        // setCurrentDialog(...); setShowDialog(true);
       } else if (payload.type === 'npc') {
         console.log('Нажат NPC:', payload);
-      // loadDialog(payload.id) и т.п.
+        try { if (payload.id) { loadDialog(payload.id); } } catch (_) {}
       } else {
         console.log('Интерактив:', payload);
       }
+      return;
+    }
+
+    // Если своих интерактивов не нашли, пробуем поймать NPC из общего массива npcMeshes
+    try {
+      const npcHit = raycaster.intersectObjects(npcMeshesRef.current || [], true);
+      console.log('[INTERIOR CLICK] npcMeshes hits:', npcHit.length);
+      if (npcHit.length) {
+        let root = npcHit[0].object;
+        while (root.parent && !root.userData?.isNpc) root = root.parent;
+        if (root.userData && root.userData.npcId) {
+          console.log('[INTERIOR CLICK] NPC root found:', root.userData.npcId);
+          if (root.userData.npcId === 'Computer') {
+            setShowMiniGame(true);
+            setPasswordCorrect(false);
+            setAudioUrl('/audio/firs.ogg');
+            addSeregaComment('Ну чё, хакер, разберёшься?');
+          } else {
+            loadDialog(root.userData.npcId);
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[INTERIOR CLICK] npcMeshes raycast failed:', e);
+    }
     };
 
-    window.addEventListener('click', onClick);
-    return () => window.removeEventListener('click', onClick);
+    const target = rendererRef.current ? rendererRef.current.domElement : window;
+    target.addEventListener('click', onClick);
+    target.addEventListener('pointerdown', onClick);
+    return () => { target.removeEventListener('click', onClick); target.removeEventListener('pointerdown', onClick); };
   }, []);
 
   async function buyItem(key) {
@@ -1492,9 +1773,6 @@ useEffect(() => {
   function toggleWorldVisibility(visible) {
     groundRef.current && (groundRef.current.visible = visible);
     cityMeshesRef.current.forEach(m => m.visible = visible);
-    Object.values(remotePlayersRef.current).forEach(p => {
-      if (p.model) p.model.visible = visible;
-    });
   }
 
   function createInterior() {
@@ -1758,7 +2036,11 @@ useEffect(() => {
       });
     }
 
-    async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '') {
+    async function addOtherPlayer(id, x, z, avatarURL, genderRemote = 'male', firstName = '', lastName = '', y = 0) {
+      if (remotePlayers[id]) {
+        // Уже есть — не пересоздаём
+        return;
+      }
       let model;
       try {
         if (!avatarURL) throw new Error('no avatarURL');
@@ -1793,7 +2075,7 @@ useEffect(() => {
         );
       }
       model.scale.set(1, 1, 1);
-      model.position.set(x, 0, z);
+      model.position.set(x, y || 0, z);
       scene.add(model);
 
       const fullname = `${firstName} ${lastName}`.trim();
@@ -2088,26 +2370,45 @@ useEffect(() => {
     socket.on('connect', () => console.log('Socket connected, id=', socket.id));
     socket.on('currentPlayers', (players) => {
       console.log('currentPlayers', players);
-      // Получаем cityId текущего игрока из профиля
+      // Получаем профиль (только для ФИО/аватара)
       const myProfile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
-      const myCityId = myProfile.last_city_id || 1;
+      // Добавляем/обновляем игроков из пришедшего списка
       Object.keys(players).forEach(id => {
         if (id === socket.id) return;
-        const { x, z, avatarURL, gender, firstName, lastName, cityId } = players[id];
-        if (cityId && cityId !== myCityId) return; // показываем только игроков своего города
-        addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName);
+        const { x, y, z, avatarURL, gender, firstName, lastName } = players[id];
+        if (!remotePlayers[id]) {
+          addOtherPlayer(id, x, z, avatarURL, gender, firstName, lastName, y);
+        }
       });
-      // После получения списка игроков, отправляем newPlayer о себе
-      const profile = myProfile;
-      socket.emit('newPlayer', {
-        x: player?.position?.x || 0,
-        z: player?.position?.z || 0,
-        avatarURL: avatarUrl,
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        userId: profile.id,
-        cityId: myCityId
+      // Удаляем тех, кого нет в актуальном списке (после входа/выхода из интерьера и т.п.)
+      const validIds = new Set(Object.keys(players));
+      Object.keys(remotePlayers).forEach((rid) => {
+        if (rid === socket.id) return;
+        if (!validIds.has(rid)) {
+          if (remotePlayers[rid] && remotePlayers[rid].model) {
+            scene.remove(remotePlayers[rid].model);
+          }
+          delete remotePlayers[rid];
+          if (voiceIcons.current[rid]) delete voiceIcons.current[rid];
+          cleanupVoiceConnection(rid);
+        }
       });
+
+      // После получения списка игроков, отправляем newPlayer о себе ТОЛЬКО когда мы не в интерьере
+      // Отправляем себя только если это первый коннект и ещё не отправляли
+      if (!window.__newPlayerSentOnce) {
+        const profile = myProfile;
+        socket.emit('newPlayer', {
+          x: player?.position?.x || 0,
+          y: player?.position?.y || 0,
+          z: player?.position?.z || 0,
+          avatarURL: avatarUrl,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          userId: profile.id
+        });
+        window.__newPlayerSentOnce = true;
+      }
     });
 
     socket.on('chatMessage', ({ playerId, name, message, position }) => {
@@ -2149,7 +2450,7 @@ useEffect(() => {
       const remote = remotePlayers[data.playerId];
       if (!remote) return;
 
-      const newPos = new THREE.Vector3(data.x, 0, data.z);
+      const newPos = new THREE.Vector3(data.x, typeof data.y === 'number' ? data.y : remote.model.position.y, data.z);
       const dir = new THREE.Vector3().subVectors(newPos, remote.model.position);
       if (dir.lengthSq() > 1e-4) {
         const angle = Math.atan2(dir.x, dir.z);
@@ -2204,6 +2505,8 @@ useEffect(() => {
         return;
       }
       
+      // Если мы сейчас внутри интерьера, показывать новых игроков следует только когда они тоже будут в нашем списке currentPlayers,
+      // который уже фильтруется сервером по interiorId. Здесь просто добавляем как обычно.
       addOtherPlayer(playerId, x, z, avatarURL, gender, firstName, lastName);
     });
 
@@ -2256,6 +2559,7 @@ useEffect(() => {
     
     function onMouseLookMove(e) {
       if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !playerRef.current) return;
+      if (altHeldRef.current) return; // при зажатом Alt не вращаем камеру
       
       // Throttling - обрабатываем только каждые 8ms (120fps для более плавного движения)
       if (mouseMoveTimeout) return;
@@ -2402,22 +2706,7 @@ useEffect(() => {
         return;
       }
       
-      // Обработка событий pointer lock
-      if (renderer && renderer.domElement) {
-        renderer.domElement.addEventListener('click', () => {
-          if (isInInteriorRef.current && !document.pointerLockElement) {
-            renderer.domElement.requestPointerLock();
-          }
-        });
-      }
-      
-      document.addEventListener('pointerlockchange', () => {
-        if (renderer && renderer.domElement && document.pointerLockElement === renderer.domElement) {
-          console.log('Pointer lock activated');
-        } else {
-          console.log('Pointer lock deactivated');
-        }
-      });
+      // Pointer lock больше не используется в интерьере — курсор всегда активен
 
       // Проверяем, что THREE.PlaneGeometry доступен
       if (!THREE.PlaneGeometry) {
@@ -2540,7 +2829,7 @@ useEffect(() => {
         const npcData = [
             { id: 'bartender', model: '/models/npc/bartender.glb', position: [0, 0, 10] },
             { id: 'guard', model: '/models/npc/guard.glb', position: [0, 0, 5] },
-            { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [0, 0, -5] },
+            { id: 'Adventurer', model: '/models/npc/galina.glb', position: [-16.5, -100, -68.8] },
             { id: 'BeachCharacter', model: '/models/npc/BeachCharacter.glb', position: [0, 0, 3] },
             { id: 'Oxranik', model: '/models/npc/Oxranik.glb', position: [0, 0, -3] },
             { id: 'Computer', model: '/models/npc/Computer.glb', position: [0.1, 0.1, 2.1] }
@@ -2605,6 +2894,7 @@ useEffect(() => {
                 model.rotateY(Math.PI); // Развернуть персонажа 
                 scene.add(model);
                 npcMeshes.push(model); // Правильное добавление в массив
+                npcMeshesRef.current.push(model);
                 cityMeshesRef.current.push(model);
 
                 if (npc.id == 'Computer') {
@@ -2734,14 +3024,7 @@ useEffect(() => {
 
         updateCameraFollow();
 
-        socketRef.current?.emit('newPlayer', {
-          x: player.position.x,
-          z: player.position.z,
-          avatarURL: avatarUrl,
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-          userId: profile.id
-        });
+        // Не отправляем здесь newPlayer — делаем это централизованно после currentPlayers
       } catch (err) {
         console.error("Ошибка загрузки модели игрока:", err);
         console.error("Детали ошибки:", {
@@ -3148,15 +3431,11 @@ useEffect(() => {
 
     function onKeyDown(event) {
       keys[event.key] = true;
+      if (event.key === 'Alt') altHeldRef.current = true;
       
       console.log('onKeyDown:', event.key, 'isInInteriorRef.current:', isInInteriorRef.current);
       
-      // Обработка клавиши Escape для выхода из интерьера
-      if (event.key === 'Escape' && isInInteriorRef.current) {
-        console.log('Escape нажата - выходим из интерьера');
-        exitInterior();
-        return;
-      }
+      // ESC больше не выходит из интерьера
       
       if (isInInteriorRef.current) {
         console.log('Обрабатываем клавишу в интерьере:', event.key);
@@ -3184,6 +3463,7 @@ useEffect(() => {
 
     function onKeyUp(event) {
       keys[event.key] = false;
+       if (event.key === 'Alt') altHeldRef.current = false;
       if (isInInteriorRef.current) {
         const k = event.key.toLowerCase();
         if (k === 'arrowup' || k === 'w') stopMove('forward');
@@ -3349,7 +3629,7 @@ useEffect(() => {
         const angle = Math.atan2(dir.x, dir.z);
         const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, angle, 0));
         player.quaternion.slerp(targetQuat, Math.min(1, 10 * delta));
-        socketRef.current?.emit('playerMovement', { x: player.position.x, z: player.position.z });
+        socketRef.current?.emit('playerMovement', { x: player.position.x, y: player.position.y, z: player.position.z });
 
         if (currentAction !== walkAction) {
           currentAction.fadeOut(0.2);
@@ -3480,19 +3760,53 @@ useEffect(() => {
       const speed = 2; // Уменьшаем скорость для более плавного движения в интерьере
       const rotSpeed = Math.PI * 0.5; // Уменьшаем скорость поворота
       
+      // Проверка триггера выхода по внутренней точке
+      if (interiorExitPosRef.current && player.position.distanceTo(interiorExitPosRef.current) < 0.7) {
+        exitInterior();
+        return;
+      }
+
       // Поворот влево-вправо (A/D или стрелки)
       if (move.left) player.rotation.y += rotSpeed * delta;
       if (move.right) player.rotation.y -= rotSpeed * delta;
+      // Камера следует за вращением тела
+      const headHeight = 1.6;
+      const camBase = new THREE.Vector3(player.position.x, player.position.y + headHeight, player.position.z);
+      const camForward = new THREE.Vector3(0, 0, -0.08).applyEuler(new THREE.Euler(0, player.rotation.y, 0));
+      fpCamRef.current.position.copy(camBase.add(camForward));
+      const lookForward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, player.rotation.y, 0));
+      fpCamRef.current.lookAt(fpCamRef.current.position.clone().add(lookForward));
       
-      // Движение вперед-назад (W/S или стрелки)
+      // Движение с проверкой коллизий
+      const tryMove = (dirVec) => {
+        const candidate = player.position.clone().addScaledVector(dirVec, speed * delta);
+        // Обновляем AABB игрока (простая капсула не используется, только коробка)
+        const half = 0.3; // половина ширины
+        const height = 1.8;
+        const playerBox = new THREE.Box3(
+          new THREE.Vector3(candidate.x - half, candidate.y, candidate.z - half),
+          new THREE.Vector3(candidate.x + half, candidate.y + height, candidate.z + half)
+        );
+        const hits = (interiorCollidersRef.current || []).some((mesh) => {
+          const box = new THREE.Box3().setFromObject(mesh);
+          return box.intersectsBox(playerBox);
+        });
+        if (!hits) {
+          player.position.copy(candidate);
+        }
+      };
+
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
-      if (move.forward) player.position.addScaledVector(forward, speed * delta);
-      if (move.backward) player.position.addScaledVector(forward, -speed * delta);
-      
-      // Боковое движение (Q/E для strafe, если нужно)
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
-      if (move.strafeLeft) player.position.addScaledVector(right, -speed * delta);
-      if (move.strafeRight) player.position.addScaledVector(right, speed * delta);
+      if (move.forward) tryMove(forward);
+      if (move.backward) tryMove(forward.clone().multiplyScalar(-1));
+      if (move.strafeLeft) tryMove(right.clone().multiplyScalar(-1));
+      if (move.strafeRight) tryMove(right);
+
+      // Отправляем позицию внутри интерьера, чтобы нас видели другие внутри
+      if (socketRef.current) {
+        socketRef.current.emit('playerMovement', { x: player.position.x, y: player.position.y, z: player.position.z });
+      }
     }
 
     function updateCameraFollow() {
@@ -3549,7 +3863,8 @@ useEffect(() => {
       }
       
       // Обновляем движение игрока
-      if (typeof updateDestinationMovement === 'function') {
+      // В интерьере отключаем автодвижение по кликам (двигаемся только WASD)
+      if (!isInInteriorRef.current && typeof updateDestinationMovement === 'function') {
         updateDestinationMovement(delta);
       }
       if (typeof updateFirstPersonMovement === 'function') {

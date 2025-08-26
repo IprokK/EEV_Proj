@@ -7,13 +7,13 @@ export const useDialogManager = () => {
     const [formData, setFormData] = useState({});
     const [currentForm, setCurrentForm] = useState(null);
 
-    // Функция для отправки данных о прослушанном диалоге на сервер
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     const markDialogAsListened = async (jsonFilename) => {
         try {
-            // Извлекаем только имя файла без пути
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
             const filename = jsonFilename.split('/').pop().split('\\').pop();
             console.log('Normalized filename:', filename);
-            console.log("Связь с бд ест111ь");
+            console.log("пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅ111пїЅ");
             const token = localStorage.getItem('token');
             const response = await fetch('/api/listen', {
                 method: 'POST',
@@ -22,17 +22,18 @@ export const useDialogManager = () => {
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    player_id: JSON.parse(sessionStorage.getItem('user_profile')).email,
+                    // player_id Р±РѕР»СЊС€Рµ РЅРµ РѕР±СЏР·Р°С‚РµР»РµРЅ: СЃРµСЂРІРµСЂ РІРѕР·СЊРјС‘С‚ РµРіРѕ РёР· С‚РѕРєРµРЅР°/СЃРµСЃСЃРёРё РїСЂРё РЅР°Р»РёС‡РёРё
                     json_filename: filename
                 })
             });
-            console.log("Связь с бд есть3455654");
+            console.log("пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ3455654");
 
             if (!response.ok) {
-                console.error('Ошибка при отметке диалога как прослушанного');
+                const txt = await response.text().catch(()=> '');
+                console.error('РћС€РёР±РєР° РїСЂРё Р·Р°РїРёСЃРё РїСЂРѕСЃР»СѓС€Р°РЅРЅРѕРіРѕ:', response.status, txt);
             }
         } catch (error) {
-            console.error('Ошибка сети:', error);
+            console.error('РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё Р·Р°РїРёСЃРё РїСЂРѕСЃР»СѓС€Р°РЅРЅРѕРіРѕ:', error);
         }
     };
 
@@ -44,25 +45,25 @@ export const useDialogManager = () => {
             setDialogIndex(0);
             setShowDialog(true);
         } catch (error) {
-            console.error('Ошибка загрузки диалога:', error);
+            console.error('пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ:', error);
         }
     };
 
     const handleAnswerSelect = async (answer) => {
-        console.log('[Debug] Answer object:', answer); // <- Что здесь выводится?
-        console.log('[Debug] "end" in answer:', 'end' in answer); // <- Есть ли ключ end?
+        console.log('[Debug] Answer object:', answer); // <- пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ?
+        console.log('[Debug] "end" in answer:', 'end' in answer); // <- пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ end?
         if (answer.end !== undefined) {
             console.log('[Debug] Dialog end triggered!');
-            // При завершении диалога отмечаем его как прослушанный
+            // пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             if (currentDialog?.filename) {
                 await markDialogAsListened(currentDialog.filename);
-                console.log("Связь с бд есть");
+                console.log("пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ");
             }
             setShowDialog(false);
         } else if (answer.next !== undefined) {
             if (typeof answer.next === 'string' && answer.next.startsWith('form_')) {
                 const nextNode = currentDialog.dialog.find(node => node.id === answer.next);
-                console.log("Связь с бд есть, но того все ебал");
+                console.log("пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ, пїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ");
                 if (nextNode && nextNode.type === 'form') {
                     setCurrentForm(nextNode);
                     return;
@@ -73,12 +74,12 @@ export const useDialogManager = () => {
             if (nextIndex !== -1) {
                 setDialogIndex(nextIndex);
             } else {
-                console.error('Диалоговый узел не найден:', answer.next);
+                console.error('пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ:', answer.next);
                 setShowDialog(false);
             }
         }
         else if (answer.next == answer.end) {
-            console.log("Маму того ебал");
+            console.log("пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ");
         }
         else {
             setShowDialog(false);
@@ -92,9 +93,9 @@ export const useDialogManager = () => {
             if (nextIndex !== -1) {
                 setDialogIndex(nextIndex);
                 setCurrentForm(null);
-                console.log('Отправленные данные:', formData);
+                console.log('пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ:', formData);
 
-                // Если это последний узел формы, отмечаем диалог как прослушанный
+                // пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
                 const nextNode = currentDialog.dialog[nextIndex];
                 if (nextNode.end && currentDialog?.filename) {
                     await markDialogAsListened(currentDialog.filename);

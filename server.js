@@ -138,6 +138,7 @@ io.on('connection', socket => {
       socketId: socket.id,
       userId: socket.userId,
       x,
+      y: 0,
       z,
       cityId,
       avatarURL: null,
@@ -148,6 +149,7 @@ io.on('connection', socket => {
     players[socket.id] = playersByCity[cityId][socket.id];
     socket.cityId = cityId;
     socket.x = x;
+    socket.y = 0;
     socket.z = z;
     // Отправляем только игроков этого города
     socket.emit('currentPlayers', playersByCity[cityId]);
@@ -155,11 +157,12 @@ io.on('connection', socket => {
 
   // --- Новый игрок ---
   socket.on('newPlayer', data => {
-    const cityId = data.cityId || socket.cityId || 1;
+    const cityId = socket.cityId || 1;
     if (!playersByCity[cityId]) playersByCity[cityId] = {};
     const p = playersByCity[cityId][socket.id] || {};
     Object.assign(p, {
       x: data.x,
+      y: data.y ?? p.y ?? 0,
       z: data.z,
       cityId,
       avatarURL: data.avatarURL || null,
@@ -170,19 +173,19 @@ io.on('connection', socket => {
     playersByCity[cityId][socket.id] = p;
     players[socket.id] = p;
     socket.cityId = cityId;
-    // Сообщаем только игрокам этого города
+    // Сообщаем всем игрокам этого города (без учёта интерьера)
     for (const id in playersByCity[cityId]) {
-      if (id !== socket.id) {
-        io.to(id).emit('newPlayer', {
-          playerId: socket.id,
-          x: p.x,
-          z: p.z,
-          avatarURL: p.avatarURL,
-          gender: p.gender,
-          firstName: p.firstName,
-          lastName: p.lastName
-        });
-      }
+      if (id === socket.id) continue;
+      io.to(id).emit('newPlayer', {
+        playerId: socket.id,
+        x: p.x,
+        y: p.y ?? 0,
+        z: p.z,
+        avatarURL: p.avatarURL,
+        gender: p.gender,
+        firstName: p.firstName,
+        lastName: p.lastName
+      });
     }
   });
 
@@ -191,21 +194,27 @@ io.on('connection', socket => {
     const cityId = socket.cityId;
     if (playersByCity[cityId] && playersByCity[cityId][socket.id]) {
       playersByCity[cityId][socket.id].x = movementData.x;
+      if (typeof movementData.y === 'number') {
+        playersByCity[cityId][socket.id].y = movementData.y;
+      }
       playersByCity[cityId][socket.id].z = movementData.z;
-      // Сообщаем только игрокам этого города
+      // Сообщаем только игрокам этого города (без учёта интерьера)
       for (const id in playersByCity[cityId]) {
         if (id !== socket.id) {
           io.to(id).emit('playerMoved', {
             playerId: socket.id,
             x: movementData.x,
+            y: typeof movementData.y === 'number' ? movementData.y : (playersByCity[cityId][socket.id].y ?? 0),
             z: movementData.z
           });
         }
       }
       // Voice chat nearby только в этом городе
+      const norm = v => (v == null ? null : String(v));
       const sender = playersByCity[cityId][socket.id];
       for (const [id, other] of Object.entries(playersByCity[cityId])) {
         if (id === socket.id) continue;
+        // Голосовой чат больше не фильтруем по интерьеру
         const dx = sender.x - other.x;
         const dz = sender.z - other.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
@@ -215,6 +224,46 @@ io.on('connection', socket => {
         }
       }
     }
+  });
+
+  // --- Смена интерьера (вход/выход) ---
+  socket.on('interiorChange', ({ interiorId }) => {
+    const cityId = socket.cityId;
+    if (!playersByCity[cityId] || !playersByCity[cityId][socket.id]) return;
+    const norm = v => (v == null ? null : String(v));
+    const prevInterior = playersByCity[cityId][socket.id].interiorId ?? null;
+    const nextInterior = norm(interiorId);
+    playersByCity[cityId][socket.id].interiorId = nextInterior;
+    socket.interiorId = nextInterior;
+
+    // Сообщаем игрокам старого интерьера, что этот игрок ушёл
+    for (const id in playersByCity[cityId]) {
+      if (id === socket.id) continue;
+      const other = playersByCity[cityId][id];
+      const samePrev = norm(other?.interiorId) === norm(prevInterior);
+      if (samePrev && prevInterior !== nextInterior) {
+        io.to(id).emit('playerDisconnected', socket.id);
+      }
+    }
+
+    // Сообщаем всем игрокам города о появлении (без учёта интерьера)
+    for (const id in playersByCity[cityId]) {
+      if (id === socket.id) continue;
+      const p = playersByCity[cityId][socket.id];
+      io.to(id).emit('newPlayer', {
+        playerId: socket.id,
+        x: p.x,
+        z: p.z,
+        avatarURL: p.avatarURL,
+        gender: p.gender,
+        firstName: p.firstName,
+        lastName: p.lastName
+      });
+    }
+
+    // Отправляем текущий список видимых игроков только для этого сокета
+    // Отправляем полный список игроков города
+    socket.emit('currentPlayers', playersByCity[cityId]);
   });
 
   socket.on('sendMessage', async ({ receiverId, message }, callback) => {
@@ -363,151 +412,168 @@ app.get('/api/users', authenticate, async (req, res) => {
 
 // Новый маршрут для получения сообщений с конкретным контактом
 app.get('/api/messages/:contactId', authenticate, async (req, res) => {
-    const userId = req.user.id;
-    const contactId = parseInt(req.params.contactId, 10);
+  const userId = req.user.id;
+  const contactId = parseInt(req.params.contactId, 10);
+  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
+  try {
+    // Ensure table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INT NOT NULL,
+        receiver_id INT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_read BOOLEAN NOT NULL DEFAULT FALSE
+      )`);
+  } catch (e) {
+    console.warn('[GET /api/messages/:contactId] ensure table failed:', e.message);
+  }
 
-    try {
-        const messagesRes = await virtualWorldPool.query(
-            `SELECT * FROM messages
-             WHERE (sender_id = $1 AND receiver_id = $2)
-                OR (sender_id = $2 AND receiver_id = $1)
-             ORDER BY created_at ASC`,
-            [userId, contactId]
-        );
-
-        res.json(messagesRes.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Ошибка получения сообщений' });
-    }
+  try {
+    const sql = `SELECT * FROM messages
+                 WHERE (sender_id = $1 AND receiver_id = $2)
+                    OR (sender_id = $2 AND receiver_id = $1)
+                 ORDER BY created_at ASC`;
+    const messagesRes = await pool.query(sql, [userId, contactId]);
+    res.json(messagesRes.rows);
+  } catch (err) {
+    console.error('[GET /api/messages/:contactId] error:', err);
+    res.status(500).json({ error: 'Ошибка получения сообщений' });
+  }
 });
 
 app.post('/api/messages/send', authenticate, async (req, res) => {
-    const senderId = req.user.id;
-    const { receiverId, message } = req.body;
-    const recvId = parseInt(receiverId, 10);
-    console.log("Запрос пошел");
-    try {
-        // Проверка существования получателя в основной БД
-        const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
-        if (receiverCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Пользователь не найден' });
-        }
-
-        // Сохранение сообщения в virtual_world
-        const result = await virtualWorldPool.query(
-            `INSERT INTO messages (sender_id, receiver_id, message, created_at)
-     VALUES ($1, $2, $3, NOW())
-     RETURNING id, created_at, is_read`,
-            [senderId, recvId, message]
-        );
-
-        const newMessage = result.rows[0];
-
-        // Отправка через сокеты, если получатель онлайн
-        const receiverSocketId = onlineUsers[recvId];
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('newMessage', {
-                id: newMessage.id,
-                text: message,
-                senderId,
-                timestamp: newMessage.created_at,
-                isRead: newMessage.is_read
-            });
-        }
-
-        res.status(201).json(newMessage);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Ошибка отправки сообщения' });
+  const senderId = req.user.id;
+  const { receiverId, message } = req.body || {};
+  const recvId = parseInt(receiverId, 10);
+  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
+  console.log('[POST /api/messages/send] sender:', senderId, 'receiver:', recvId);
+  try {
+    const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
+    if (receiverCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
     }
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS messages (
+          id SERIAL PRIMARY KEY,
+          sender_id INT NOT NULL,
+          receiver_id INT NOT NULL,
+          message TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          is_read BOOLEAN NOT NULL DEFAULT FALSE
+        )`);
+    } catch (e) {
+      console.warn('[POST /api/messages/send] ensure table failed:', e.message);
+    }
+
+    const result = await pool.query(
+      `INSERT INTO messages (sender_id, receiver_id, message, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, created_at, is_read`,
+      [senderId, recvId, message]
+    );
+    const newMessage = result.rows[0];
+
+    const receiverSocketId = onlineUsers[recvId];
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit('newMessage', {
+        id: newMessage.id,
+        text: message,
+        senderId,
+        timestamp: newMessage.created_at,
+        isRead: newMessage.is_read
+      });
+    }
+    res.status(201).json(newMessage);
+  } catch (err) {
+    console.error('[POST /api/messages/send] error:', err);
+    res.status(500).json({ error: 'Ошибка отправки сообщения' });
+  }
 });
 
 app.get('/api/messages', authenticate, async (req, res) => {
-    const userId = req.user.id;
-
-    try {
-        // Получение сообщений из virtual_world
-        const messagesRes = await virtualWorldPool.query(
-            `SELECT * FROM messages
+  const userId = req.user.id;
+  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INT NOT NULL,
+        receiver_id INT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_read BOOLEAN NOT NULL DEFAULT FALSE
+      )`);
+  } catch (e) {
+    console.warn('[GET /api/messages] ensure table failed:', e.message);
+  }
+  try {
+    const messagesRes = await pool.query(
+      `SELECT * FROM messages
        WHERE sender_id = $1 OR receiver_id = $1
        ORDER BY created_at DESC`,
-            [userId]
-        );
-
-        if (messagesRes.rows.length === 0) {
-            return res.json([]);
-        }
-
-        // Сбор ID пользователей
-        const userIds = new Set();
-        messagesRes.rows.forEach(msg => {
-            userIds.add(msg.sender_id);
-            userIds.add(msg.receiver_id);
-        });
-
-        // Получение данных пользователей из основной БД
-        const usersRes = await db.query(
-            `SELECT id, first_name, last_name, avatar_url
-       FROM users
-       WHERE id = ANY($1)`,
-            [Array.from(userIds)]
-        );
-
-        // Создание карты пользователей
-        const userMap = {};
-        usersRes.rows.forEach(user => {
-            userMap[user.id] = {
-                name: `${user.first_name} ${user.last_name}`,
-                avatar: user.avatar_url
-            };
-        });
-
-        // Формирование ответа
-        const messages = messagesRes.rows.map(msg => ({
-            id: msg.id,
-            text: msg.message,
-            senderId: msg.sender_id,
-            receiverId: msg.receiver_id,
-            sender: userMap[msg.sender_id] || { name: 'Неизвестный', avatar: null },
-            receiver: userMap[msg.receiver_id] || { name: 'Неизвестный', avatar: null },
-            timestamp: msg.created_at,
-            isRead: msg.is_read
-        }));
-
-        res.json(messages);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Ошибка получения сообщений' });
+      [userId]
+    );
+    if (messagesRes.rows.length === 0) {
+      return res.json([]);
     }
+    const userIds = new Set();
+    messagesRes.rows.forEach(msg => { userIds.add(msg.sender_id); userIds.add(msg.receiver_id); });
+    const usersRes = await db.query(
+      `SELECT id, first_name, last_name, avatar_url FROM users WHERE id = ANY($1)`,
+      [Array.from(userIds)]
+    );
+    const userMap = {};
+    usersRes.rows.forEach(user => {
+      userMap[user.id] = { name: `${user.first_name} ${user.last_name}`, avatar: user.avatar_url };
+    });
+    const messages = messagesRes.rows.map(msg => ({
+      id: msg.id,
+      text: msg.message,
+      senderId: msg.sender_id,
+      receiverId: msg.receiver_id,
+      sender: userMap[msg.sender_id] || { name: 'Неизвестный', avatar: null },
+      receiver: userMap[msg.receiver_id] || { name: 'Неизвестный', avatar: null },
+      timestamp: msg.created_at,
+      isRead: msg.is_read
+    }));
+    res.json(messages);
+  } catch (err) {
+    console.error('[GET /api/messages] error:', err);
+    res.status(500).json({ error: 'Ошибка получения сообщений' });
+  }
 });
 
 app.patch('/api/messages/:id/read', authenticate, async (req, res) => {
-    const messageId = req.params.id;
-    const userId = req.user.id;
-
-    try {
-        // Проверка прав доступа
-        const checkRes = await virtualWorldPool.query(
-            `SELECT id FROM messages WHERE id = $1 AND receiver_id = $2`,
-            [messageId, userId]
-        );
-
-        if (checkRes.rows.length === 0) {
-            return res.status(404).json({ error: 'Сообщение не найдено или доступ запрещен' });
-        }
-
-        // Обновление статуса
-        await virtualWorldPool.query(
-            `UPDATE messages SET is_read = true WHERE id = $1`,
-            [messageId]
-        );
-
-        res.status(204).end();
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Ошибка обновления сообщения' });
+  const messageId = req.params.id;
+  const userId = req.user.id;
+  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INT NOT NULL,
+        receiver_id INT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_read BOOLEAN NOT NULL DEFAULT FALSE
+      )`);
+  } catch (e) {
+    console.warn('[PATCH /api/messages/:id/read] ensure table failed:', e.message);
+  }
+  try {
+    const checkRes = await pool.query(`SELECT id FROM messages WHERE id = $1 AND receiver_id = $2`, [messageId, userId]);
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Сообщение не найдено или доступ запрещен' });
     }
+    await pool.query(`UPDATE messages SET is_read = true WHERE id = $1`, [messageId]);
+    res.status(204).end();
+  } catch (err) {
+    console.error('[PATCH /api/messages/:id/read] error:', err);
+    res.status(500).json({ error: 'Ошибка обновления сообщения' });
+  }
 });
 
 app.get('/api/me', authenticate, async (req, res) => {
@@ -787,24 +853,73 @@ app.get(
 app.post('/api/interiors/:interiorId/enter', authenticate, async (req, res) => {
   const interiorId = parseInt(req.params.interiorId, 10);
   try {
-    const interior = (await db.query(
+    const base = await db.query(
       'SELECT spawn_x, spawn_y, spawn_z, spawn_rot, exit_x, exit_y, exit_z, exit_rot FROM interiors WHERE id = $1',
       [interiorId]
-    )).rows[0];
+    );
+    const interior = base.rows[0];
     if (!interior) return res.status(404).json({ error: 'Интерьер не найден' });
+
+    let exitInt = null;
+    try {
+      const extra = await db.query(
+        'SELECT exit_int_x, exit_int_y, exit_int_z FROM interiors WHERE id = $1',
+        [interiorId]
+      );
+      if (extra.rows[0] && (extra.rows[0].exit_int_x != null || extra.rows[0].exit_int_y != null || extra.rows[0].exit_int_z != null)) {
+        exitInt = {
+          x: extra.rows[0].exit_int_x,
+          y: extra.rows[0].exit_int_y,
+          z: extra.rows[0].exit_int_z
+        };
+      }
+    } catch (e2) {
+      // Колонки exit_int_* могут отсутствовать — это не ошибка для клиента
+      console.warn('exit_int_* columns are not available yet:', e2.message);
+    }
+
+    // Эффективная точка входа: если spawn_x/y/z не заданы (или равны 0),
+    // пробуем использовать внутреннюю точку выхода (exit_int_*),
+    // иначе в крайнем случае используем координаты внешнего выхода.
+    const rawSpawn = {
+      x: interior.spawn_x,
+      y: interior.spawn_y,
+      z: interior.spawn_z,
+      rot: interior.spawn_rot
+    };
+    const isZeroOrNull = v => v == null || Number(v) === 0;
+    const spawnLooksEmpty = isZeroOrNull(rawSpawn.x) && isZeroOrNull(rawSpawn.y) && isZeroOrNull(rawSpawn.z);
+
+    let effectiveSpawn = { ...rawSpawn };
+    if (spawnLooksEmpty) {
+      if (exitInt && typeof exitInt.x === 'number' && typeof exitInt.z === 'number') {
+        effectiveSpawn = { x: exitInt.x, y: exitInt.y ?? 0, z: exitInt.z, rot: rawSpawn.rot };
+      } else if (!isZeroOrNull(interior.exit_x) || !isZeroOrNull(interior.exit_y) || !isZeroOrNull(interior.exit_z)) {
+        // Фолбэк на внешние координаты выхода, если они заданы
+        effectiveSpawn = { x: interior.exit_x, y: interior.exit_y, z: interior.exit_z, rot: rawSpawn.rot };
+      }
+    }
+
+    // Логируем вычисленные координаты для отладки
+    try {
+      console.log('[INTERIOR ENTER]', {
+        interiorId,
+        spawn: effectiveSpawn,
+        rawSpawn,
+        exit: { x: interior.exit_x, y: interior.exit_y, z: interior.exit_z, rot: interior.exit_rot },
+        exitInt
+      });
+    } catch (_) {}
+
     res.json({
-      spawn: {
-        x: interior.spawn_x,
-        y: interior.spawn_y,
-        z: interior.spawn_z,
-        rot: interior.spawn_rot
-      },
+      spawn: effectiveSpawn,
       exit: {
         x: interior.exit_x,
         y: interior.exit_y,
         z: interior.exit_z,
         rot: interior.exit_rot
-      }
+      },
+      exitInt
     });
   } catch (e) {
     console.error(e);
@@ -844,31 +959,38 @@ app.get('/api/interiors/:interiorId/definition', authenticate, async (req, res) 
 
 // Начало копи
 app.post('/api/listen', authenticate, async (req, res) => {
-    console.log('Request data:', req.body);
-    const { player_id, json_filename } = req.body;
-
-    if (!player_id || !json_filename) {
-        return res.status(400).json({
-            success: false,
-            error: 'player_id and json_filename are required'
-        });
+  try {
+    console.log('[API /api/listen] Request body:', req.body);
+    const { player_id: bodyPlayerId, json_filename } = req.body || {};
+    const authUser = req.user || {};
+    const effectivePlayerId = bodyPlayerId || authUser.email || authUser.id || authUser.userId;
+    if (!effectivePlayerId || !json_filename) {
+      return res.status(400).json({ success: false, error: 'player_id and json_filename are required' });
     }
 
+    // Выбираем пул: если есть отдельный пул, берём его, иначе общий db
+    const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
     try {
-        await virtualWorldPool.query(`
-            INSERT INTO json_listened (player_id, json_filename, listened_at)
-            VALUES ($1, $2, NOW())
-        `, [player_id, json_filename]);
-
-        res.status(200).json({ success: true });
-    } catch (err) {
-        console.error('Full DB error:', err);
-        res.status(500).json({
-            success: false,
-            error: 'Database operation failed',
-            details: process.env.NODE_ENV === 'development' ? err.message : null
-        });
+      // Создаём таблицу при необходимости
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS json_listened (
+          id SERIAL PRIMARY KEY,
+          player_id TEXT NOT NULL,
+          json_filename TEXT NOT NULL,
+          listened_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+    } catch (e) {
+      console.warn('[API /api/listen] ensure table failed:', e.message);
     }
+
+    const q = `INSERT INTO json_listened (player_id, json_filename, listened_at) VALUES ($1, $2, NOW())`;
+    await pool.query(q, [String(effectivePlayerId), String(json_filename)]);
+    console.log('[API /api/listen] Saved listened:', { player: effectivePlayerId, json: json_filename });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[API /api/listen] error:', err);
+    return res.status(500).json({ success: false, error: 'Database operation failed', details: err.message });
+  }
 });
 //Конец копи
 //Начало копи
@@ -1047,15 +1169,19 @@ app.get('/api/quests/progress', authenticate, async (req, res) => {
     console.log("Загрузка на сервере. ID пользователя:", req.user.id);
 
     try {
-        // Получаем email пользователя из основной БД
+        // Получаем email пользователя из основной БД (или из токена)
+        const fallbackEmail = req.user?.email || req.user?.username || null;
         const userRes = await db.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
         if (userRes.rows.length === 0) {
-            return res.status(404).json({ error: 'Пользователь не найден' });
+            if (!fallbackEmail) {
+                return res.status(404).json({ error: 'Пользователь не найден' });
+            }
         }
-        const userEmail = userRes.rows[0].email;
+        const userEmail = userRes.rows[0]?.email || fallbackEmail;
 
         // Получаем список всех квестов с их JSON файлами
-        const questsQuery = await virtualWorldPool.query(`
+        const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
+        const questsQuery = await pool.query(`
             SELECT q.id, q.title, qj.json_filename
             FROM quests q
             JOIN quest_jsons qj ON q.id = qj.quest_id
@@ -1063,7 +1189,20 @@ app.get('/api/quests/progress', authenticate, async (req, res) => {
         `);
 
         // Получаем JSON файлы, которые прослушал игрок
-        const listenedQuery = await virtualWorldPool.query(`
+        // Гарантируем наличие таблицы json_listened
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS json_listened (
+                  id SERIAL PRIMARY KEY,
+                  player_id TEXT NOT NULL,
+                  json_filename TEXT NOT NULL,
+                  listened_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )`);
+        } catch (e) {
+            console.warn('[/api/quests/progress] ensure table json_listened failed:', e.message);
+        }
+
+        const listenedQuery = await pool.query(`
             SELECT json_filename FROM json_listened 
             WHERE player_id = $1
         `, [userEmail]);
