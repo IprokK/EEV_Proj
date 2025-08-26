@@ -73,7 +73,7 @@ function Game({ avatarUrl, gender }) {
   });
   const [inventory, setInventory] = useState([]);
   const [showInventory, setShowInventory] = useState(false);
-  const [gameTime, setGameTime] = useState('');
+  const [gameTime, setGameTime] = useState(null);
   const [balance, setBalance] = useState(() => {
     const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
     return p.balance ?? 0;
@@ -736,6 +736,13 @@ function Game({ avatarUrl, gender }) {
               objGltf.scene.scale.set(o.scale, o.scale, o.scale);
               intGroup.add(objGltf.scene);
 
+              // Добавляем меши объекта как коллайдеры интерьера
+              objGltf.scene.traverse((child) => {
+                if (child.isMesh && child.geometry) {
+                  colliders.push(child);
+                }
+              });
+
               // Если это NPC внутри интерьера — добавим кликабельную хит‑зону
               const isNpc = (o.type === 'npc') || (typeof o.model_url === 'string' && o.model_url.includes('/models/npc/'));
               if (isNpc) {
@@ -791,6 +798,10 @@ function Game({ avatarUrl, gender }) {
               }
             }
             intGroup.add(mesh);
+            // Плейсхолдер не рендерим, но используем как коллайдер
+            try { mesh.visible = false; } catch (_) {}
+            // Плейсхолдер без GLTF тоже участвует в коллизиях
+            colliders.push(mesh);
           }
           
           // Если сервер пометил объект как «интерактивный/маркер» — кликабельная зона
@@ -802,7 +813,8 @@ function Game({ avatarUrl, gender }) {
             hit.position.set(o.x, o.y + 1.0, o.z);
             hit.userData.interactable = true;
             hit.userData.payload = { type: o.type || 'marker', id: o.id || null, label: o.label || 'Интерактив' };
-            hit.visible = true; // невидим визуально (opacity≈0), но кликабелен
+            hit.visible = true; // кликабелен
+            try { if (hit.material) hit.material.visible = false; } catch (_) {}
             intGroup.add(hit);
             interiorInteractablesRef.current.push(hit);
           }
@@ -3325,9 +3337,10 @@ useEffect(() => {
     }
 
     function loadInteriorPlaceholder(int) {
+      // Упрощённый невидимый placeholder с кликабельной зоной
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(2, 2, 2),
-        new THREE.MeshStandardMaterial({ color: 0x00ffcc })
+        new THREE.MeshBasicMaterial({ visible: false })
       );
       mesh.position.set(int.pos_x, int.pos_y, int.pos_z);
       mesh.userData.interiorId = int.id;
@@ -3793,16 +3806,28 @@ useEffect(() => {
       const tryMove = (dirVec) => {
         const candidate = player.position.clone().addScaledVector(dirVec, speed * delta);
         // Обновляем AABB игрока (простая капсула не используется, только коробка)
-        const half = 0.3; // половина ширины
-        const height = 1.8;
+        const half = 0.25; // чуточку уже, чтобы не цепляться за стены
+        const height = 1.7; // немного ниже, чтобы не пересекать потолок
         const playerBox = new THREE.Box3(
           new THREE.Vector3(candidate.x - half, candidate.y, candidate.z - half),
           new THREE.Vector3(candidate.x + half, candidate.y + height, candidate.z + half)
         );
-        const hits = (interiorCollidersRef.current || []).some((mesh) => {
+        // Обновляем мировые матрицы статических коллайдеров для корректных AABB
+        try { interiorGroupRef.current && interiorGroupRef.current.updateMatrixWorld(true); } catch (_) {}
+
+        // В интерьере учитываем только внутренние коллайдеры, без городских объектов
+        const blockingMeshes = Array.isArray(interiorCollidersRef.current)
+          ? interiorCollidersRef.current
+          : [];
+
+        let hits = false;
+        for (const mesh of blockingMeshes) {
+          if (!mesh) continue;
           const box = new THREE.Box3().setFromObject(mesh);
-          return box.intersectsBox(playerBox);
-        });
+          // небольшой зазор, чтобы скользить вдоль стен
+          const expanded = box.clone().expandByScalar(0.01);
+          if (expanded.intersectsBox(playerBox)) { hits = true; break; }
+        }
         if (!hits) {
           player.position.copy(candidate);
         }
@@ -4088,7 +4113,12 @@ useEffect(() => {
         X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
       </div>
       <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
-        {new Date(gameTime).toLocaleString()}
+        {(() => {
+          if (!gameTime) return 'Загрузка времени...';
+          // Сервер шлёт ISO (gameTime.js -> toISOString). Отображаем игровое время (ускоренное в 8 раз)
+          const d = new Date(gameTime);
+          return d.toLocaleString();
+        })()}
       </div>
       {/* Кнопка карты мира */}
       <button
@@ -5556,13 +5586,13 @@ useEffect(() => {
                                           <div style={{ overflow: 'hidden' }}>
                                             <div style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.firstName} {user.lastName}</div>
                                             <div style={{ fontSize: 12, color: '#6b7280' }}>Онлайн</div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
+                                                              </div>
+                                                          </div>
+                                                      ))}
+                                                  </div>
                                     {/* Область чата */}
                                     <div style={{ flex: 1, display: isPhoneNarrow && !activeChat ? 'none' : 'flex', flexDirection: 'column', background: '#fff' }}>
-                                      {activeChat && (
+                                                  {activeChat && (
                                         <>
                                           <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 8 }}>
                                             {isPhoneNarrow && (
@@ -5571,29 +5601,29 @@ useEffect(() => {
                                             <span style={{ fontWeight: 600 }}>{activeChat.firstName} {activeChat.lastName}</span>
                                           </div>
                                           <div id="chatContainer" style={{ flex: 1, overflowY: 'auto', padding: 10, background: '#fafafa' }}>
-                                            {messages.length === 0 ? (
+                                                              {messages.length === 0 ? (
                                               <p style={{ textAlign: 'center', color: '#666' }}>Нет сообщений</p>
                                             ) : (
                                               messages.map(msg => (
                                                 <div key={msg.id} style={{ display: 'flex', justifyContent: (msg.sender_id === userProfile?.id) ? 'flex-end' : 'flex-start', margin: '8px 0' }}>
                                                   <div style={{ maxWidth: '75%', background: (msg.sender_id === userProfile?.id) ? '#0084ff' : '#e5e5ea', color: (msg.sender_id === userProfile?.id) ? '#fff' : '#000', padding: '8px 12px', borderRadius: 12 }}>{msg.message}</div>
-                                                </div>
-                                              ))
-                                            )}
-                                          </div>
+                                                                      </div>
+                                                                  ))
+                                                              )}
+                                                          </div>
                                           <div style={{ padding: 8, display: 'flex', gap: 8, borderTop: '1px solid #eee', background: '#fff' }}>
                                             <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Сообщение" onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }} style={{ flex: 1, padding: '10px 12px', borderRadius: 12, border: '1px solid #ddd' }} />
                                             <button onClick={sendMessage} style={{ padding: '10px 14px', background: '#0084ff', color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer' }}>Отправить</button>
-                                          </div>
+                                                          </div>
                                         </>
                                       )}
                                       {!activeChat && (
                                         <div style={{ margin: 'auto', color: '#666' }}>Выберите контакт</div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
+                                                  )}
+                                              </div>
+                                          </div>
+                                      </div>
+                                  )}
 
 
                           </div>

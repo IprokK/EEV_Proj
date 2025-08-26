@@ -85,6 +85,16 @@ let onlineUsers = {};
 const organizationsRouter = require('./server/organizations')(io, onlineUsers);
 app.use('/api/organizations', organizationsRouter);
 
+// Инициализация игрового времени (ускорение 8x) и вещание клиентам
+try {
+  if (GameTime && typeof GameTime === 'function') {
+    global.__gameTimeInstance = global.__gameTimeInstance || new GameTime(io, 8);
+    console.log('GameTime таймер запущен');
+  }
+} catch (e) {
+  console.error('GameTime не запущен:', e);
+}
+
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error('No token'));
