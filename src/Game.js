@@ -106,6 +106,10 @@ function Game({ avatarUrl, gender }) {
     const [activeChat, setActiveChat] = useState(null);
     // Добавьте этот код в начало компонента Game, рядом с другими состояниями
     const [telegramContacts, setTelegramContacts] = useState([]);
+    const [tgLoading, setTgLoading] = useState(false);
+    const [tgError, setTgError] = useState(null);
+    const [sysTime, setSysTime] = useState(new Date());
+    const isPhoneNarrow = true; // экран виртуального телефона — всегда узкий
 
     const [isIframeOpen, setIsIframeOpen] = useState(false);
     const [iframeUrl, setIframeUrl] = useState('');
@@ -188,7 +192,9 @@ function Game({ avatarUrl, gender }) {
         setAppsHidden(true);
         setActiveApp(appName);
         if (appName === "Telegram") {
-            loadTelegramContacts(); // Загрузка контактов при открытии
+            setTgError(null);
+            setTgLoading(true);
+            loadTelegramContacts().finally(() => setTgLoading(false));
         }
         if (appName === "Chrome") {
             loadQuestsProgress();
@@ -1322,17 +1328,23 @@ function Game({ avatarUrl, gender }) {
   async function loadTelegramContacts() {
   const token = localStorage.getItem('token');
   try {
+    setTgError(null);
     const res = await fetch('/api/users', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
+      cache: 'no-cache'
     });
     if (res.ok) {
       const data = await res.json();
       setTelegramContacts(data);
     } else {
-      console.error('Ошибка загрузки контактов Telegram');
+      const txt = await res.text().catch(()=> '');
+      console.error('Ошибка загрузки контактов Telegram', res.status, txt);
+      setTgError('Не удалось загрузить контакты');
     }
   } catch (err) {
     console.error('Ошибка сети:', err);
+    setTgError('Проблема сети');
   }
     }
 
@@ -5519,127 +5531,69 @@ useEffect(() => {
                                   )}
 
                               {activeApp === "Telegram" && (
-                                      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-                                          <div style={{ width: "100%", height: "10%", backgroundColor: "#0088cc", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                              <div style={{ fontSize: "150%", color: "white" }}>Shipgram Messenger</div>
+                                <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+                                  {/* Заголовок приложения */}
+                                  <div style={{ padding: '8px 12px', background: '#0088cc', color: '#fff', fontWeight: 700, textAlign: 'center' }}>Shipgram</div>
+                                  {/* Контент */}
+                                  <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+                                    {/* Список контактов */}
+                                    <div style={{ width: isPhoneNarrow ? (activeChat ? '0%' : '100%') : '30%', display: isPhoneNarrow && activeChat ? 'none' : 'block', borderRight: '1px solid #ddd', overflowY: 'auto', background: '#fff' }}>
+                                      <div style={{ padding: 10, fontWeight: 600, borderBottom: '1px solid #eee' }}>Контакты</div>
+                                      {tgLoading && (
+                                        <div style={{ padding: 12, color: '#666' }}>Загрузка…</div>
+                                      )}
+                                      {tgError && (
+                                        <div style={{ padding: 12, color: '#b91c1c' }}>{tgError}</div>
+                                      )}
+                                      {!tgLoading && !tgError && telegramContacts.length === 0 && (
+                                        <div style={{ padding: 12, color: '#666' }}>Контакты не найдены</div>
+                                      )}
+                                      {telegramContacts.map((user) => (
+                                        <div key={user.id} onClick={() => setActiveChat(user)} style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#111' }}>
+                                          <div style={{ width: 28, height: 28, borderRadius: 14, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                                            {user.firstName?.[0]}{user.lastName?.[0]}
                                           </div>
-
-                                          <div style={{ width: "100%", height: "90%", display: "flex" }}>
-                                              <div style={{ width: "30%", height: "100%", borderRight: "1px solid #ddd", overflowY: "auto" }}>
-                                                  <div style={{ padding: "10px", fontWeight: "bold", borderBottom: "1px solid #ddd" }}>Contacts</div>
-                                                  <div id="user-list" style={{ overflowY: "auto" }}>
-                                                      {telegramContacts.length === 0 && (
-                                                          <div style={{ padding: 10, textAlign: "center" }}>
-                                                              {telegramContacts.length === 0
-                                                                  ? "Загрузка контактов..."
-                                                                  : "Контакты не найдены"}
-                                                          </div>
-                                                      )}
-                                                      {telegramContacts.map((user, index) => (
-                                                          <div
-                                                              key={index}
-                                                              style={{
-                                                                  padding: "10px",
-                                                                  borderBottom: "1px solid #eee",
-                                                                  cursor: "pointer",
-                                                                  display: "flex",
-                                                                  alignItems: "center"
-                                                              }}
-                                                              onClick={() => setActiveChat(user)}
-                                                          >
-                                                              <div>
-                                                                  {user.firstName} {user.lastName}
-                                                              </div>
-                                                          </div>
-                                                      ))}
-                                                  </div>
-                                              </div>
-                                              <div style={{ width: "70%", height: "100%" }}>
-                                                  {activeChat && (
-                                                      <div style={{ padding: "10px" }}>
-                                                          <h3>Чат с {activeChat.firstName} {activeChat.lastName}</h3>
-                                                          {/* Контейнер сообщений с прокруткой */}
-                                                          <div
-                                                              id="chatContainer"
-                                                              style={{
-                                                                  flex: 1,
-                                                                  border: "1px solid #ddd",
-                                                                  padding: "10px",
-                                                                  overflowY: "auto",
-                                                                  marginBottom: "10px"
-                                                              }}
-                                                          >
-                                                              {messages.length === 0 ? (
-                                                                  <p style={{ textAlign: 'center', color: '#888' }}>Нет сообщений</p>
-                                                              ) : (
-                                                                  messages.map((msg) => (
-                                                                      <div
-                                                                          key={msg.id}
-                                                                          style={{
-                                                                              textAlign: msg.sender_id === userProfile?.id ? 'right' : 'left',
-                                                                              margin: '10px 0'
-                                                                          }}
-                                                                      >
-                                                                          <div style={{
-                                                                              display: 'inline-block',
-                                                                              padding: '8px 12px',
-                                                                              borderRadius: '12px',
-                                                                              background: msg.sender_id === userProfile?.id ? '#0084ff' : '#e5e5ea',
-                                                                              color: msg.sender_id === userProfile?.id ? '#fff' : '#000',
-                                                                              maxWidth: '80%'
-                                                                          }}>
-                                                                              {msg.message}
-                                                                          </div>
-                                                                          <div style={{
-                                                                              fontSize: '0.8em',
-                                                                              color: '#666',
-                                                                              marginTop: '4px'
-                                                                          }}>
-                                                                              {new Date(msg.created_at).toLocaleTimeString()}
-                                                                          </div>
-                                                                      </div>
-                                                                  ))
-                                                              )}
-                                                          </div>
-
-                                                          {/* Поле ввода и кнопка отправки */}
-                                                          <div style={{ display: 'flex' }}>
-                                                              <input
-                                                                  type="text"
-                                                                  value={newMessage}
-                                                                  onChange={(e) => setNewMessage(e.target.value)}
-                                                                  placeholder="Введите сообщение..."
-                                                                  style={{
-                                                                      flex: 1,
-                                                                      padding: '8px',
-                                                                      borderRadius: '20px',
-                                                                      border: '1px solid #ddd'
-                                                                  }}
-                                                                  onKeyDown={(e) => {
-                                                                      if (e.key === 'Enter') sendMessage();
-                                                                  }}
-                                                              />
-                                                              <button
-                                                                  onClick={sendMessage}
-                                                                  style={{
-                                                                      marginLeft: '8px',
-                                                                      padding: '8px 16px',
-                                                                      background: '#0084ff',
-                                                                      color: 'white',
-                                                                      border: 'none',
-                                                                      borderRadius: '20px',
-                                                                      cursor: 'pointer'
-                                                                  }}
-                                                              >
-                                                                  Отправить
-                                                              </button>
-                                                          </div>
-                                                      </div>
-                                                  )}
-                                              </div>
+                                          <div style={{ overflow: 'hidden' }}>
+                                            <div style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.firstName} {user.lastName}</div>
+                                            <div style={{ fontSize: 12, color: '#6b7280' }}>Онлайн</div>
                                           </div>
-                                      </div>
-                                  )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                    {/* Область чата */}
+                                    <div style={{ flex: 1, display: isPhoneNarrow && !activeChat ? 'none' : 'flex', flexDirection: 'column', background: '#fff' }}>
+                                      {activeChat && (
+                                        <>
+                                          <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            {isPhoneNarrow && (
+                                              <button onClick={() => setActiveChat(null)} style={{ border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer' }}>←</button>
+                                            )}
+                                            <span style={{ fontWeight: 600 }}>{activeChat.firstName} {activeChat.lastName}</span>
+                                          </div>
+                                          <div id="chatContainer" style={{ flex: 1, overflowY: 'auto', padding: 10, background: '#fafafa' }}>
+                                            {messages.length === 0 ? (
+                                              <p style={{ textAlign: 'center', color: '#666' }}>Нет сообщений</p>
+                                            ) : (
+                                              messages.map(msg => (
+                                                <div key={msg.id} style={{ display: 'flex', justifyContent: (msg.sender_id === userProfile?.id) ? 'flex-end' : 'flex-start', margin: '8px 0' }}>
+                                                  <div style={{ maxWidth: '75%', background: (msg.sender_id === userProfile?.id) ? '#0084ff' : '#e5e5ea', color: (msg.sender_id === userProfile?.id) ? '#fff' : '#000', padding: '8px 12px', borderRadius: 12 }}>{msg.message}</div>
+                                                </div>
+                                              ))
+                                            )}
+                                          </div>
+                                          <div style={{ padding: 8, display: 'flex', gap: 8, borderTop: '1px solid #eee', background: '#fff' }}>
+                                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Сообщение" onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }} style={{ flex: 1, padding: '10px 12px', borderRadius: 12, border: '1px solid #ddd' }} />
+                                            <button onClick={sendMessage} style={{ padding: '10px 14px', background: '#0084ff', color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer' }}>Отправить</button>
+                                          </div>
+                                        </>
+                                      )}
+                                      {!activeChat && (
+                                        <div style={{ margin: 'auto', color: '#666' }}>Выберите контакт</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
 
 
                           </div>
