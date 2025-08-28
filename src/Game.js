@@ -14,6 +14,7 @@ import Inventory from './components/Inventory';
 import { useDialogManager } from './components/DialogSystem/DialogManager';
 import { DialogWindow } from './components/DialogSystem/DialogWindow';
 import WaveformPlayer from './pages/WaveformPlayer';
+import RealEstateApp from './pages/RealEstateApp';
 function Game({ avatarUrl, gender }) {
 
   // 1) реф для хранилища сцены
@@ -1932,7 +1933,9 @@ useEffect(() => {
             { id: 'Adventurer', model: '/models/npc/Adventurer.glb', position: [0, 0, -5] },
             { id: 'BeachCharacter', model: '/models/npc/BeachCharacter.glb', position: [0, 0, 3] },
             { id: 'Oxranik', model: '/models/npc/Oxranik.glb', position: [0, 0, -3] },
-            { id: 'Computer', model: '/models/npc/Computer.glb', position: [0.1, 0.1, 2.1] }
+            { id: 'Computer', model: '/models/npc/Computer.glb', position: [0.1, 0.1, 2.1] },
+            { id: 'Animated_Wo', model: '/models/npc/Animated_Wo.glb', position: [2, 0, 0] },
+            { id: 'Animated_Woman', model: '/models/npc/Animated_Woman.glb', position: [10, 0, 0]}
         ];
         for (const npc of npcData) {
             try {
@@ -1959,6 +1962,12 @@ useEffect(() => {
                 else if (npc.id == 'Oxranik') {
                     label = createPlayerLabel('Охранник');
                 }
+                else if (npc.id == 'Animated_Wo') {
+                    label = createPlayerLabel('Женщина1');
+                }
+                else if (npc.id == 'Animated_Woman') {
+                    label = createPlayerLabel('Женщина2');
+                }
 
                 if (label) {
                     label.position.set(0, 2.2, 0);
@@ -1969,6 +1978,10 @@ useEffect(() => {
                 scene.add(model);
                 npcMeshes.push(model); // Правильное добавление в массив
                 cityMeshesRef.current.push(model);
+
+                if (npc.id == 'Animated_Wo') {
+                    model.scale.set(0.3, 0.3, 0.3);
+                }
 
                 if (npc.id == 'Computer') {
                     model.scale.set(0.001, 0.001, 0.001);
@@ -4161,33 +4174,11 @@ useEffect(() => {
                                       </ul>
                                   </div>
                               )}
-                              {activeApp === "Camera" && (
-                                  <div style={bodyStyle}>
-                                      <header style={headerStyle}>
-                                          <h1>Недвижимость в Санкт-Петербурге</h1>
-                                          <p>Лучшие предложения прямо сейчас</p>
-                                      </header>
-                                      <main style={mainStyle}>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://yandex-images.clstorage.net/V5t2lR153/5b1b76_Cs6Z/J2fT6H2GNMqQp5pP1PgV1n2hU6uO-QeqmIIO5oUFJLYGmDdlCheTdwp3Fes87_2cZGawZZUtHoYEDrfWOBlbiuYjgPmtwWLeQiBPTdQ5VVEq8ZfsmHgQ7AgVGTbHR7J3R1e4bddLCTyQvMi04j_pSmQy9iMF_IUd1JkuWinczlhhK1WtM5byh965VsSTMNfWbyFXJR71HOMX0Rw31Y_p6pfcemgeRsf2335F-O3zoYSuPrl1TTeCksKfLpcukMeRISgY6HjUd0NRNRyK1_QfkCfrkiYVc5oglB6Xt9-MYaLXmjWjFccHcRa2yvqouCvFazm99gHwwxdOGGMWIFgClmkiWaZ8EzXHnrUfhB24kdXm6F6qkDrZ5FiVEz5Uh2ipkFD0ZFNHwrRY88t4LbXqxOl9PrrANY-TgZnplSDSDJchKllhNdTzzdF2VYSduBHY465UYpy6EWqZ2NO51YUpKl3QvOPViYP-mHyNuupxbUPtv3V0TLPD1kAQ518omM_eJGCXoDpUMoFUNNlF1PHY0Ssg0aVVsF3h3xNeN9qKrqNR3faslMZOt9Z8jTtgu-gE5PH1vIh8TN8H3Cle5tPEWCRuW-553fpCnbfSTBR8FhujqZzqm7Dbq9QYkPBfh6evnhU6rl4HhbXRfkR26HpiAK7ydLMMcElZxV9unC3Zy1Tjq1Nu8ZU7i9c1HsXcvZ0aJWRRJJC5E-2b29H3GkjtZ5ibdy-eSAI30LbN-CT56cqlfzoyinGA2Y2ZoFutGUsXqiSdrXPecY5XfJnMU79enmUnUS1Q-VKgVFxZ-5LB56rfkXXsX0UHux0wwj8g9yrKofW0M4j3T5NCmqsdaVwMGCbpVqX0mTOL0Lfdwdyw0FovaJ9j3HbVqtVWXPMUACVh1Z757FJHzDyaO8I64LVpjGQ3PTSK9A4bhlap2igVChZqbxli91w-ipgxXcPWPBoTL-pRqBg3He7UUN_zms"
-                                                  alt="Квартира у метро"
-                                                  style={imageStyle}
-                                              />
-                                              <h3 style={listingTitleStyle}>2-комнатная квартира у метро</h3>
-                                              <p>Площадь: 58 м² | Цена: 9 500 000 ₽</p>
-                                          </div>
-                                          <div style={listingStyle}>
-                                              <img
-                                                  src="https://img.gta5-mods.com/q95/images/beach-apartment/69814f-GTA5%202016-03-06%2023-11-55-41.png"
-                                                  alt="ЖК Комфорт"
-                                                  style={imageStyle}
-                                              />
-                                              <p>Студия 28 м² | Цена: 5 800 000 ₽</p>
-                                          </div>
-                                      </main>
-                                  </div>
-                              )}
+                                  {activeApp === "Camera" && (
+                                      <div style={bodyStyle}>
+                                          <RealEstateApp />
+                                      </div>
+                                  )}
 
                                   {activeApp === "Chrome" && (
                                       <div style={bodyStyle}>
