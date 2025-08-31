@@ -1,4 +1,4 @@
-let dotenv, express, db, Economy, GameTime, pathLib, fs, virtualWorldPool;
+let dotenv, express, db, Economy, GameTime, pathLib, fs, virtualWorldPool, new_quest_Base;
 try {
   dotenv = require('dotenv').config();
   console.log('dotenv успешно импортирован');
@@ -24,6 +24,25 @@ try {
   console.error('Ошибка при импорте express:', e);
   throw e;
 }
+
+try {
+    virtualWorldPool = require('./db1');
+    console.log('db1 - virtualWorld - успешно импротирован');
+}
+catch (e) {
+    console.error('Ошибка при импорте db1 - virtual_World:', e);
+    throw e;
+}
+
+try {
+    new_quest_Base = require('./db2');
+    console.log('db2 - new_quest_Base - успешно импортирован');
+}
+catch (e) {
+    console.error('Ошибка при импорте db2 - new_quest_Base: ', e);
+    throw e;
+}
+
 try {
   db = require('./db');
   console.log('db успешно импортирован');
@@ -424,10 +443,9 @@ app.get('/api/users', authenticate, async (req, res) => {
 app.get('/api/messages/:contactId', authenticate, async (req, res) => {
   const userId = req.user.id;
   const contactId = parseInt(req.params.contactId, 10);
-  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
   try {
     // Ensure table exists
-    await pool.query(`
+      await virtualWorldPool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
         sender_id INT NOT NULL,
@@ -445,7 +463,7 @@ app.get('/api/messages/:contactId', authenticate, async (req, res) => {
                  WHERE (sender_id = $1 AND receiver_id = $2)
                     OR (sender_id = $2 AND receiver_id = $1)
                  ORDER BY created_at ASC`;
-    const messagesRes = await pool.query(sql, [userId, contactId]);
+      const messagesRes = await virtualWorldPool.query(sql, [userId, contactId]);
     res.json(messagesRes.rows);
   } catch (err) {
     console.error('[GET /api/messages/:contactId] error:', err);
@@ -457,15 +475,14 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
   const senderId = req.user.id;
   const { receiverId, message } = req.body || {};
   const recvId = parseInt(receiverId, 10);
-  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
   console.log('[POST /api/messages/send] sender:', senderId, 'receiver:', recvId);
   try {
-    const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
+      const receiverCheck = await db.query('SELECT id FROM users WHERE id = $1', [recvId]);
     if (receiverCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
     try {
-      await pool.query(`
+        await virtualWorldPool.query(`
         CREATE TABLE IF NOT EXISTS messages (
           id SERIAL PRIMARY KEY,
           sender_id INT NOT NULL,
@@ -478,7 +495,7 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
       console.warn('[POST /api/messages/send] ensure table failed:', e.message);
     }
 
-    const result = await pool.query(
+      const result = await virtualWorldPool.query(
       `INSERT INTO messages (sender_id, receiver_id, message, created_at)
        VALUES ($1, $2, $3, NOW())
        RETURNING id, created_at, is_read`,
@@ -505,9 +522,8 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
 
 app.get('/api/messages', authenticate, async (req, res) => {
   const userId = req.user.id;
-  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
-  try {
-    await pool.query(`
+    try {
+        await virtualWorldPool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
         sender_id INT NOT NULL,
@@ -520,7 +536,7 @@ app.get('/api/messages', authenticate, async (req, res) => {
     console.warn('[GET /api/messages] ensure table failed:', e.message);
   }
   try {
-    const messagesRes = await pool.query(
+      const messagesRes = await virtualWorldPool.query(
       `SELECT * FROM messages
        WHERE sender_id = $1 OR receiver_id = $1
        ORDER BY created_at DESC`,
@@ -531,7 +547,7 @@ app.get('/api/messages', authenticate, async (req, res) => {
     }
     const userIds = new Set();
     messagesRes.rows.forEach(msg => { userIds.add(msg.sender_id); userIds.add(msg.receiver_id); });
-    const usersRes = await db.query(
+      const usersRes = await virtualWorldPool.query(
       `SELECT id, first_name, last_name, avatar_url FROM users WHERE id = ANY($1)`,
       [Array.from(userIds)]
     );
@@ -559,9 +575,8 @@ app.get('/api/messages', authenticate, async (req, res) => {
 app.patch('/api/messages/:id/read', authenticate, async (req, res) => {
   const messageId = req.params.id;
   const userId = req.user.id;
-  const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
   try {
-    await pool.query(`
+      await virtualWorldPool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
         sender_id INT NOT NULL,
@@ -574,11 +589,11 @@ app.patch('/api/messages/:id/read', authenticate, async (req, res) => {
     console.warn('[PATCH /api/messages/:id/read] ensure table failed:', e.message);
   }
   try {
-    const checkRes = await pool.query(`SELECT id FROM messages WHERE id = $1 AND receiver_id = $2`, [messageId, userId]);
+      const checkRes = await virtualWorldPool.query(`SELECT id FROM messages WHERE id = $1 AND receiver_id = $2`, [messageId, userId]);
     if (checkRes.rows.length === 0) {
       return res.status(404).json({ error: 'Сообщение не найдено или доступ запрещен' });
     }
-    await pool.query(`UPDATE messages SET is_read = true WHERE id = $1`, [messageId]);
+      await virtualWorldPool.query(`UPDATE messages SET is_read = true WHERE id = $1`, [messageId]);
     res.status(204).end();
   } catch (err) {
     console.error('[PATCH /api/messages/:id/read] error:', err);
@@ -979,10 +994,9 @@ app.post('/api/listen', authenticate, async (req, res) => {
     }
 
     // Выбираем пул: если есть отдельный пул, берём его, иначе общий db
-    const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
     try {
       // Создаём таблицу при необходимости
-      await pool.query(`
+        await virtualWorldPool.query(`
         CREATE TABLE IF NOT EXISTS json_listened (
           id SERIAL PRIMARY KEY,
           player_id TEXT NOT NULL,
@@ -994,7 +1008,7 @@ app.post('/api/listen', authenticate, async (req, res) => {
     }
 
     const q = `INSERT INTO json_listened (player_id, json_filename, listened_at) VALUES ($1, $2, NOW())`;
-    await pool.query(q, [String(effectivePlayerId), String(json_filename)]);
+      await virtualWorldPool.query(q, [String(effectivePlayerId), String(json_filename)]);
     console.log('[API /api/listen] Saved listened:', { player: effectivePlayerId, json: json_filename });
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -1179,50 +1193,29 @@ app.get('/api/quests/progress', authenticate, async (req, res) => {
     console.log("Загрузка на сервере. ID пользователя:", req.user.id);
 
     try {
-        // Получаем email пользователя из основной БД (или из токена)
-        const fallbackEmail = req.user?.email || req.user?.username || null;
-        const userRes = await db.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
-        if (userRes.rows.length === 0) {
-            if (!fallbackEmail) {
-                return res.status(404).json({ error: 'Пользователь не найден' });
-            }
-        }
-        const userEmail = userRes.rows[0]?.email || fallbackEmail;
+        // ВМЕСТО получения email, используем напрямую ID пользователя
+        const userId = req.user.id.toString(); // Преобразуем в строку для consistency
 
         // Получаем список всех квестов с их JSON файлами
-        const pool = (typeof virtualWorldPool !== 'undefined' && virtualWorldPool) ? virtualWorldPool : db;
-        const questsQuery = await pool.query(`
+        const questsQuery = await virtualWorldPool.query(`
             SELECT q.id, q.title, qj.json_filename
             FROM quests q
             JOIN quest_jsons qj ON q.id = qj.quest_id
             ORDER BY q.id
         `);
 
-        // Получаем JSON файлы, которые прослушал игрок
-        // Гарантируем наличие таблицы json_listened
-        try {
-            await pool.query(`
-                CREATE TABLE IF NOT EXISTS json_listened (
-                  id SERIAL PRIMARY KEY,
-                  player_id TEXT NOT NULL,
-                  json_filename TEXT NOT NULL,
-                  listened_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )`);
-        } catch (e) {
-            console.warn('[/api/quests/progress] ensure table json_listened failed:', e.message);
-        }
-
-        const listenedQuery = await pool.query(`
+        // Получаем JSON файлы, которые прослушал игрок по его ID
+        const listenedQuery = await virtualWorldPool.query(`
             SELECT json_filename FROM json_listened 
             WHERE player_id = $1
-        `, [userEmail]);
+        `, [userId]); // Используем ID вместо email
 
-        console.log("Результат запроса listenedQuery:", listenedQuery.rows);
+        console.log("Результат запроса listenedQuery для ID", userId, ":", listenedQuery.rows);
 
         const listenedFiles = new Set(listenedQuery.rows.map(row => row.json_filename));
         console.log("Прослушанные файлы:", Array.from(listenedFiles));
 
-        // Остальной код остается без изменений...
+        // Остальной код без изменений...
         const questsMap = new Map();
         questsQuery.rows.forEach(row => {
             if (!questsMap.has(row.id)) {
