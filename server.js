@@ -471,6 +471,98 @@ app.get('/api/messages/:contactId', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/messages/:contactId', authenticate, async (req, res) => {
+    const userId = req.user.id;
+    const contactId = parseInt(req.params.contactId, 10);
+    try {
+        // Ensure table exists
+        await virtualWorldPool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INT NOT NULL,
+        receiver_id INT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_read BOOLEAN NOT NULL DEFAULT FALSE
+      )`);
+    } catch (e) {
+        console.warn('[GET /api/messages/:contactId] ensure table failed:', e.message);
+    }
+
+    try {
+        const sql = `SELECT * FROM messages
+                 WHERE (sender_id = $1 AND receiver_id = $2)
+                    OR (sender_id = $2 AND receiver_id = $1)
+                 ORDER BY created_at ASC`;
+        const messagesRes = await virtualWorldPool.query(sql, [userId, contactId]);
+        res.json(messagesRes.rows);
+    } catch (err) {
+        console.error('[GET /api/messages/:contactId] error:', err);
+        res.status(500).json({ error: 'Ошибка получения сообщений' });
+    }
+});
+
+app.get('/api/messages-read/:contactId', authenticate, async (req, res) => {
+    const userId = req.user.id;
+    const contactId = parseInt(req.params.contactId, 10);
+
+    try {
+        // Проверяем есть ли НЕпрочитанные сообщения от этого контакта
+        const sql = `SELECT EXISTS (
+            SELECT 1 FROM messages 
+            WHERE sender_id = $1 
+            AND receiver_id = $2 
+            AND is_read = false
+            AND sender_id != receiver_id
+        ) as has_unread`;
+
+        const result = await virtualWorldPool.query(sql, [contactId, userId]);
+
+        // Если есть непрочитанные - возвращаем "true", иначе "false"
+        const hasUnread = result.rows[0].has_unread;
+        res.json(hasUnread ? "true" : "false");
+
+    } catch (err) {
+        console.error('[GET /api/messages-read/:contactId] error:', err);
+        res.status(500).json({ error: 'Ошибка проверки состояния' });
+    }
+});
+
+
+
+
+app.post('/api/messages-read-true-false', authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { contactId } = req.body;
+
+        if (!contactId) {
+            return res.status(400).json({ error: 'contactId required' });
+        }
+
+        // Проверяем что contactId не равен ID текущего пользователя
+        if (parseInt(contactId) === userId) {
+            return res.json({ success: true, skipped: 'Нельзя отмечать свои собственные сообщения' });
+        }
+
+        // Отмечаем сообщения как прочитанные ТОЛЬКО если отправитель ≠ получатель
+        await virtualWorldPool.query(
+            `UPDATE messages 
+             SET is_read = true 
+             WHERE sender_id = $1 AND receiver_id = $2 
+             AND sender_id != receiver_id`,  // Добавляем проверку
+            [contactId, userId]
+        );
+
+        res.json({ success: true });
+
+    } catch (error) {
+        console.error('Error updating read status:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
 app.post('/api/messages/send', authenticate, async (req, res) => {
   const senderId = req.user.id;
   const { receiverId, message } = req.body || {};

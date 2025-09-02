@@ -1364,6 +1364,7 @@ function Game({ avatarUrl, gender }) {
     const [newMessage, setNewMessage] = useState("");
     const [messageInterval, setMessageInterval] = useState(null);
     const [messages, setMessages] = useState([]);
+    //const [readmes, setReadmes] = useState('false');
     const [userProfile, setUserProfile] = useState(null);
 
     // Функция загрузки сообщений
@@ -1371,7 +1372,29 @@ function Game({ avatarUrl, gender }) {
         if (!contactId) return;
 
         const token = localStorage.getItem('token');
+        async function markMessagesAsRead(contactId, token) {
+            try {
+                const res = await fetch('/api/messages-read-true-false', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        contactId: contactId
+                    })
+                });
+
+                if (!res.ok) {
+                    console.error('Ошибка отметки сообщений как прочитанных');
+                }
+            } catch (error) {
+                console.error('Error marking as read:', error);
+            }
+        }
+
         try {
+            // 1. Загружаем сообщения
             const res = await fetch(`/api/messages/${contactId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -1379,21 +1402,51 @@ function Game({ avatarUrl, gender }) {
             if (res.ok) {
                 const data = await res.json();
                 setMessages(data);
-                console.log('Сообщение загружено');
+                console.log('Сообщения загружены');
+
+                // 2. Отмечаем сообщения как прочитанные
+                await markMessagesAsRead(contactId, token);
+
                 // Прокручиваем чат вниз
                 setTimeout(() => {
                     const chatContainer = document.getElementById('chatContainer');
                     if (chatContainer) {
                         chatContainer.scrollTop = chatContainer.scrollHeight;
                     }
-                }, 100);
+                }, 1000);
             } else {
                 console.error('Ошибка загрузки сообщений');
             }
         } catch (err) {
-            console.error('Ошибка сети:', err);
+            console.error('Ошибка:', err);
         }
     }
+   /* async function readmessages(contactId) {
+        if (!contactId) return;
+
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`/api/messages-read/${contactId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const data = await res.text();
+                if (data == "true") {
+                    readmes('true'); // Есть непрочитанные
+                } else {
+                    readmes('false'); // Нет непрочитанных
+                }
+                console.log('Статус прочитанности проверен:', data);
+            } else {
+                console.error('Ошибка проверки сообщений');
+                readmes('false');
+            }
+        } catch (err) {
+            console.error('Ошибка:', err);
+            readmes('false');
+        }
+    }*/
 
     // Функция отправки сообщения
     async function sendMessage() {
@@ -1431,10 +1484,11 @@ function Game({ avatarUrl, gender }) {
         if (activeChat) {
             // Первоначальная загрузка сообщений
             loadMessages(activeChat.id);
-
+            //readmessages(activeChat.id)
             // Запускаем интервал для проверки новых сообщений
             const interval = setInterval(() => {
                 loadMessages(activeChat.id);
+                //readmessages(activeChat.id);
             }, 1000); // Проверка каждую секунду
 
             setMessageInterval(interval);
@@ -5588,39 +5642,70 @@ function Game({ avatarUrl, gender }) {
                                                     </div>
                                                 ))}
                                             </div>
-                                            {/* Область чата */}
-                                            <div style={{ flex: 1, display: isPhoneNarrow && !activeChat ? 'none' : 'flex', flexDirection: 'column', background: '#fff' }}>
-                                                {activeChat && (
-                                                    <>
-                                                        <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                                            {isPhoneNarrow && (
-                                                                <button onClick={() => setActiveChat(null)} style={{ border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer' }}>←</button>
-                                                            )}
-                                                            <span style={{ fontWeight: 600 }}>{activeChat.firstName} {activeChat.lastName}</span>
-                                                        </div>
-                                                        <div id="chatContainer" style={{ flex: 1, overflowY: 'auto', padding: 10, background: '#fafafa' }}>
-                                                            {messages.length === 0 ? (
-                                                                <p style={{ textAlign: 'center', color: '#666' }}>Нет сообщений</p>
-                                                            ) : (
-                                                                messages.map(msg => (
-                                                                    <div key={msg.id} style={{ display: 'flex', justifyContent: (msg.sender_id === userProfile?.id) ? 'flex-end' : 'flex-start', margin: '8px 0' }}>
-                                                                        <div style={{ maxWidth: '75%', background: (msg.sender_id === userProfile?.id) ? '#0084ff' : '#e5e5ea', color: (msg.sender_id === userProfile?.id) ? '#fff' : '#000', padding: '8px 12px', borderRadius: 12 }}>{msg.message}</div>
-                                                                    </div>
-                                                                ))
-                                                            )}
-                                                        </div>
-                                                        <div style={{ padding: 8, display: 'flex', gap: 8, borderTop: '1px solid #eee', background: '#fff' }}>
+                                                {/* Область чата */}
+                                                <div style={{ flex: 1, display: isPhoneNarrow && !activeChat ? 'none' : 'flex', flexDirection: 'column', background: '#fff', overflowX: 'hidden', overflowY: 'auto' }}>
+                                                    {activeChat && (
+                                                        <>
+                                                            <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                {isPhoneNarrow && (
+                                                                    <button onClick={() => setActiveChat(null)} style={{ border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer' }}>←</button>
+                                                                )}
+                                                                <span style={{ fontWeight: 600 }}>{activeChat.firstName} {activeChat.lastName}</span>
+                                                            </div>
+                                                            <div id="chatContainer" style={{ flex: 1, overflowY: 'auto', padding: 10, background: '#fafafa' }}>
+                                                                {console.log("UserProfile ID:", activeChat.id, "Type:", typeof activeChat.id)}
+                                                                {console.log("First message sender_id:", messages[0]?.sender_id, "Type:", typeof messages[0]?.sender_id)}
+                                                                {messages.length === 0 ? (
+                                                                    <p style={{ textAlign: 'center', color: '#666' }}>Нет сообщений</p>
+                                                                ) : (
+                                                                    messages.map(msg => (
+                                                                        <div key={msg.id} style={{ display: 'flex', justifyContent: (Number(msg.sender_id) == Number(activeChat.id)) ? 'flex-start' : 'flex-end', margin: '8px 0' }}>
+                                                                            <div style={{
+                                                                                maxWidth: 'min(40%, 30ch)', // Ограничение и по % и по символам 
+                                                                                background: (Number(msg.sender_id) == Number(activeChat.id)) ? '#e5e5ea' : '#0084ff',
+                                                                                color: (Number(msg.sender_id) == Number(activeChat.id)) ? '#000' : '#fff',
+                                                                                padding: '8px 12px',
+                                                                                borderRadius: 12,
+                                                                                wordWrap: 'break-word',
+                                                                                overflowWrap: 'break-word',
+                                                                                whiteSpace: 'pre-wrap'
+                                                                            }}>
+                                                                                {msg.message}
+                                                                            </div>
+                                                                        </div>
+                                                                    ))
+                                                                )}
+                                                            </div>
+                                                            <div style={{
+                                                                padding: 8,
+                                                                display: 'flex',
+                                                                gap: 8,
+                                                                borderTop: '1px solid #eee',
+                                                                background: '#fff',
+                                                                width: '100%'
+                                                            }}>
                                                                 <input
                                                                     type="text"
                                                                     value={newMessage}
                                                                     onChange={(e) => setNewMessage(e.target.value)}
                                                                     placeholder="Сообщение"
                                                                     onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }}
-                                                                    style={{ flex: 1, width: '80%', padding: '8px 8px', borderRadius: 12, border: '1px solid #ddd' }} />
+                                                                    style={{
+                                                                        flex: 1,
+                                                                        padding: '8px 8px',
+                                                                        width: '80%',
+                                                                        maxWidth: '140px',
+                                                                        borderRadius: 12,
+                                                                        border: '1px solid #ddd',
+                                                                        boxSizing: 'border-box',
+                                                                        wordWrap: 'break-word',
+                                                                        whiteSpace: 'pre-wrap'
+                                                                    }}
+                                                                />
                                                                 <button onClick={sendMessage} style={{ padding: '8px 8px', background: '#0084ff', color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer' }}>➤</button>
-                                                        </div>
-                                                    </>
-                                                )}
+                                                            </div>
+                                                        </>
+                                                    )}
                                                 {!activeChat && (
                                                     <div style={{ margin: 'auto', color: '#666' }}>Выберите контакт</div>
                                                 )}
