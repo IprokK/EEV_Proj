@@ -33,7 +33,7 @@ catch (e) {
     console.error('Ошибка при импорте db1 - virtual_World:', e);
     throw e;
 }
-
+/*
 try {
     new_quest_Base = require('./db2');
     console.log('db2 - new_quest_Base - успешно импортирован');
@@ -42,7 +42,7 @@ catch (e) {
     console.error('Ошибка при импорте db2 - new_quest_Base: ', e);
     throw e;
 }
-
+*/
 try {
   db = require('./db');
   console.log('db успешно импортирован');
@@ -99,7 +99,8 @@ const io = require('socket.io')(http, {
   }
 });
 
-let onlineUsers = {};
+let onlineUsers = new Map();
+let lastSeenTimes = new Map(); // Добавляем отслеживание времени последнего онлайн
 
 const organizationsRouter = require('./server/organizations')(io, onlineUsers);
 app.use('/api/organizations', organizationsRouter);
@@ -120,7 +121,19 @@ io.use((socket, next) => {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     socket.userId = payload.id;
-    onlineUsers[socket.userId] = socket.id; // Добавить пользователя в онлайн
+    onlineUsers.set(socket.userId, socket.id); // Добавить пользователя в онлайн
+    
+    // Обновляем время последнего онлайн
+    lastSeenTimes.set(socket.userId, new Date());
+    console.log(`Пользователь ${socket.userId} стал онлайн, время: ${lastSeenTimes.get(socket.userId)}`);
+    
+    // Уведомляем всех клиентов о том, что пользователь стал онлайн
+    socket.broadcast.emit('userStatusChanged', { 
+      userId: socket.userId, 
+      isOnline: true 
+    });
+    console.log(`Отправлено событие userStatusChanged для пользователя ${socket.userId} (онлайн)`);
+    
     next();
   } catch (err) {
     next(new Error('Invalid token'));
@@ -315,7 +328,7 @@ io.on('connection', socket => {
             );
 
             const newMessage = result.rows[0];
-            const receiverSocketId = onlineUsers[recvId];
+            const receiverSocketId = onlineUsers.get(recvId);
 
             // Отправка получателю
             if (receiverSocketId) {
@@ -404,7 +417,18 @@ io.on('connection', socket => {
 
   // --- Отключение ---
   socket.on('disconnect', async () => {
-    delete onlineUsers[socket.userId];
+    // Обновляем время последнего онлайн
+    lastSeenTimes.set(socket.userId, new Date());
+    console.log(`Пользователь ${socket.userId} стал офлайн, время: ${lastSeenTimes.get(socket.userId)}`);
+    
+    // Уведомляем всех клиентов о том, что пользователь стал офлайн
+    socket.broadcast.emit('userStatusChanged', { 
+      userId: socket.userId, 
+      isOnline: false 
+    });
+    console.log(`Отправлено событие userStatusChanged для пользователя ${socket.userId} (офлайн)`);
+    
+    onlineUsers.delete(socket.userId);
     const cityId = socket.cityId;
     const player = playersByCity[cityId]?.[socket.id];
     if (player) {
@@ -435,6 +459,82 @@ app.get('/api/users', authenticate, async (req, res) => {
         res.json(rows);
     } catch (e) {
         console.error('Ошибка получения списка пользователей', e);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// API endpoint для получения статуса пользователей для Telegram
+app.get('/api/users/status', authenticate, async (req, res) => {
+    try {
+        console.log(`Запрос статуса пользователей от пользователя ${req.user.id}`);
+        
+        const { rows } = await db.query(`
+            SELECT id, first_name AS "firstName", last_name AS "lastName", avatar_url AS "avatarURL"
+            FROM users
+            WHERE id != $1
+        `, [req.user.id]);
+        
+        // Добавляем статус online и время последнего онлайн для каждого пользователя
+        const usersWithStatus = rows.map(user => ({
+            ...user,
+            isOnline: onlineUsers.has(user.id),
+            lastSeen: lastSeenTimes.get(user.id) || null
+        }));
+        
+        console.log(`Возвращено ${usersWithStatus.length} пользователей с статусом`);
+        console.log('Онлайн пользователи:', Array.from(onlineUsers.keys()));
+        
+        res.json(usersWithStatus);
+    } catch (e) {
+        console.error('Ошибка получения статуса пользователей', e);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// API endpoint to get user information by ID
+app.get('/api/users/:userId', authenticate, async (req, res) => {
+    const userId = parseInt(req.params.userId, 10);
+    try {
+        const { rows } = await db.query(`
+            SELECT id, first_name AS "firstName", last_name AS "lastName", avatar_url AS "avatarURL"
+            FROM users
+            WHERE id = $1
+        `, [userId]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = rows[0];
+        const isOnline = onlineUsers.has(user.id);
+        const lastSeen = lastSeenTimes.get(user.id) || new Date();
+        res.json({
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            avatarURL: user.avatarURL,
+            isOnline: isOnline,
+            lastSeen: lastSeen
+        });
+    } catch (e) {
+        console.error('Ошибка получения информации о пользователе по ID', e);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// API endpoint to get unread message count for a specific contact
+app.get('/api/messages-read/:contactId', authenticate, async (req, res) => {
+    const userId = req.user.id;
+    const contactId = parseInt(req.params.contactId, 10);
+    
+    try {
+        const { rows } = await db.query(`
+            SELECT COUNT(*) as unread_count
+            FROM messages 
+            WHERE sender_id = $1 AND recipient_id = $2 AND is_read = false
+        `, [contactId, userId]);
+        
+        res.json({ unreadCount: parseInt(rows[0].unread_count) });
+    } catch (e) {
+        console.error('Ошибка получения количества непрочитанных сообщений:', e);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
@@ -595,7 +695,7 @@ app.post('/api/messages/send', authenticate, async (req, res) => {
     );
     const newMessage = result.rows[0];
 
-    const receiverSocketId = onlineUsers[recvId];
+            const receiverSocketId = onlineUsers.get(recvId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit('newMessage', {
         id: newMessage.id,
@@ -1531,9 +1631,45 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-http.listen(PORT, () => {
+const server = http.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+// Обработка сигналов для graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  gracefulShutdown();
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  gracefulShutdown();
+});
+
+function gracefulShutdown() {
+  console.log('Уведомляем всех клиентов о перезагрузке сервера...');
+  
+  // Отправляем уведомление всем подключенным клиентам
+  io.emit('serverRestart', { 
+    message: 'Сервер будет перезагружен через 5 секунд. Пожалуйста, сохраните прогресс.',
+    restartIn: 5000
+  });
+  
+  // Даем время клиентам получить уведомление
+  setTimeout(() => {
+    console.log('Закрываем сервер...');
+    server.close(() => {
+      console.log('HTTP server closed');
+      process.exit(0);
+    });
+    
+    // Принудительно закрываем через 10 секунд
+    setTimeout(() => {
+      console.error('Could not close connections in time, forcefully shutting down');
+      process.exit(1);
+    }, 10000);
+  }, 5000);
+}
 
 // Логирование всех маршрутов и middleware
 ['get', 'post', 'put', 'delete', 'use'].forEach(method => {

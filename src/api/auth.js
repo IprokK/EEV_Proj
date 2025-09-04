@@ -33,4 +33,44 @@ export async function registerStep1(data) {
     });
     return r.json();
   }
+
+export const getUsersStatus = async (token) => {
+    try {
+        const response = await fetch('/api/users/status', {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch users status');
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching users status:', error);
+        throw error;
+    }
+};
+
+export const loadUserInfo = async (userId, token) => {
+    try {
+        const response = await fetch(`/api/users/${userId}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch user info');
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching user info:', error);
+        throw error;
+    }
+};
   

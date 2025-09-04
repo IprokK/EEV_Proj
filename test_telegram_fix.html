@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест исправления Telegram</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+    </style>
+</head>
+<body>
+    <h1>Тест исправления Telegram контактов</h1>
+    
+    <div class="test-section">
+        <h2>1. Тест загрузки контактов</h2>
+        <div class="input-group">
+            <label for="token1">JWT Token:</label>
+            <input type="text" id="token1" placeholder="Введите JWT токен" style="width: 400px;">
+        </div>
+        <button onclick="testLoadContacts()">Загрузить контакты</button>
+        <div id="contactsResult" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Тест получения информации о пользователе</h2>
+        <div class="input-group">
+            <label for="token2">JWT Token:</label>
+            <input type="text" id="token2" placeholder="Введите JWT токен" style="width: 400px;">
+        </div>
+        <div class="input-group">
+            <label for="userId">User ID:</label>
+            <input type="number" id="userId" placeholder="Введите ID пользователя">
+        </div>
+        <button onclick="testGetUserInfo()">Получить информацию о пользователе</button>
+        <div id="userInfoResult" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Тест количества непрочитанных сообщений</h2>
+        <div class="input-group">
+            <label for="token3">JWT Token:</label>
+            <input type="text" id="token3" placeholder="Введите JWT токен" style="width: 400px;">
+        </div>
+        <div class="input-group">
+            <label for="contactId">Contact ID:</label>
+            <input type="number" id="contactId" placeholder="Введите ID контакта">
+        </div>
+        <button onclick="testUnreadCount()">Получить количество непрочитанных</button>
+        <div id="unreadResult" class="result"></div>
+    </div>
+
+    <script>
+        async function testLoadContacts() {
+            const token = document.getElementById('token1').value;
+            const resultDiv = document.getElementById('contactsResult');
+            
+            if (!token) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = 'Ошибка: Введите JWT токен';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/users/status', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Успешно загружено ${data.length} контактов:\n\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Ошибка ${response.status}: ${errorText}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Ошибка сети: ${error.message}`;
+            }
+        }
+
+        async function testGetUserInfo() {
+            const token = document.getElementById('token2').value;
+            const userId = document.getElementById('userId').value;
+            const resultDiv = document.getElementById('userInfoResult');
+            
+            if (!token || !userId) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = 'Ошибка: Введите JWT токен и User ID';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/users/${userId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Информация о пользователе:\n\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Ошибка ${response.status}: ${errorText}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Ошибка сети: ${error.message}`;
+            }
+        }
+
+        async function testUnreadCount() {
+            const token = document.getElementById('token3').value;
+            const contactId = document.getElementById('contactId').value;
+            const resultDiv = document.getElementById('unreadResult');
+            
+            if (!token || !contactId) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = 'Ошибка: Введите JWT токен и Contact ID';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/messages-read/${contactId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Количество непрочитанных сообщений:\n\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Ошибка ${response.status}: ${errorText}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Ошибка сети: ${error.message}`;
+            }
+        }
+
+        // Автоматически копируем токен между полями
+        document.getElementById('token1').addEventListener('input', function() {
+            document.getElementById('token2').value = this.value;
+            document.getElementById('token3').value = this.value;
+        });
+    </script>
+</body>
+</html>

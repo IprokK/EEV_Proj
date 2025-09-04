@@ -169,7 +169,7 @@ module.exports = function(io, onlineUsers) {
       let thirst = parseFloat(rows[0].thirst ?? 100);
 
       if (balance < price) {
-        const sock = onlineUsers[req.user.id];
+        const sock = onlineUsers.get(req.user.id);
         if (sock) io.to(sock).emit('chatMessage', { playerId: 0, name: 'Система', message: `Вам недостаточно средств для покупки ${itemDef.name}` });
         return res.status(400).json({ error: 'insufficient funds' });
       }
@@ -196,7 +196,7 @@ module.exports = function(io, onlineUsers) {
       satiety = Math.min(100, satiety + parseFloat(itemDef.hunger_gain));
       thirst = Math.min(100, thirst + parseFloat(itemDef.thirst_gain));
 
-      const sock = onlineUsers[req.user.id];
+      const sock = onlineUsers.get(req.user.id);
       if (sock) io.to(sock).emit('chatMessage', { playerId: 0, name: 'Система', message: `Вы купили ${itemDef.name}` });
 
       res.json({ success: true, balance, satiety, thirst });

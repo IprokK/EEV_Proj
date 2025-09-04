@@ -15,6 +15,8 @@ import Inventory from './components/Inventory';
 import OrgControlPanel from './components/OrgControlPanel';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
 import WaveformPlayer from './pages/WaveformPlayer';
+import { getUsersStatus, loadUserInfo } from './api/auth.js';
+
 function Game({ avatarUrl, gender }) {
 
     // 1) реф для хранилища сцены
@@ -31,6 +33,7 @@ function Game({ avatarUrl, gender }) {
     const cleanupTimerRef = useRef(null);
     // Глобальный менеджер прогресса загрузки (используем в GLTFLoader)
     const loadingManagerRef = useRef(null);
+    const overlayTimeoutRef = useRef(null);
     // Кликабельные объекты внутри интерьера
     const interiorInteractablesRef = useRef([]);
     const npcMeshesRef = useRef([]);
@@ -1341,14 +1344,19 @@ function Game({ avatarUrl, gender }) {
         const token = localStorage.getItem('token');
         try {
             setTgError(null);
-            const res = await fetch('/api/users', {
+            const res = await fetch('/api/users/status', {
                 headers: { Authorization: `Bearer ${token}` },
                 credentials: 'include',
                 cache: 'no-cache'
             });
             if (res.ok) {
                 const data = await res.json();
-                setTelegramContacts(data);
+                // Добавляем счетчик непрочитанных сообщений для каждого пользователя
+                const dataWithUnread = data.map(user => ({
+                    ...user,
+                    unreadCount: 0
+                }));
+                setTelegramContacts(dataWithUnread);
             } else {
                 const txt = await res.text().catch(() => '');
                 console.error('Ошибка загрузки контактов Telegram', res.status, txt);
@@ -1366,6 +1374,223 @@ function Game({ avatarUrl, gender }) {
     const [messages, setMessages] = useState([]);
     //const [readmes, setReadmes] = useState('false');
     const [userProfile, setUserProfile] = useState(null);
+
+    // Функция показа уведомлений о сообщениях
+    const showMessageNotification = async (senderId, messageText) => {
+        try {
+            // Сначала пытаемся найти отправителя в контактах
+            let senderName = 'Неизвестный';
+            const contact = telegramContacts.find(c => c.id === senderId);
+            
+            if (contact) {
+                senderName = contact.firstName || contact.lastName || 'Неизвестный';
+            } else {
+                // Если не найден в контактах, загружаем информацию о пользователе
+                try {
+                    const userInfo = await loadUserInfo(senderId, localStorage.getItem('token'));
+                    senderName = userInfo.firstName || userInfo.lastName || 'Неизвестный';
+                } catch (error) {
+                    console.error('Ошибка загрузки информации о пользователе:', error);
+                    senderName = 'Неизвестный';
+                }
+            }
+            
+            // Создаем уведомление
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 15px 20px;
+                border-radius: 10px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                z-index: 10000;
+                font-family: 'Arial', sans-serif;
+                font-size: 14px;
+                max-width: 300px;
+                transform: translateX(400px);
+                transition: transform 0.3s ease-out;
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.2);
+            `;
+            
+            notification.innerHTML = `
+                <div style="font-weight: bold; margin-bottom: 5px; color: #ffd700;">${senderName}</div>
+                <div style="opacity: 0.9;">${messageText.length > 50 ? messageText.substring(0, 50) + '...' : messageText}</div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Анимация появления
+            setTimeout(() => {
+                notification.style.transform = 'translateX(0)';
+            }, 100);
+            
+            // Автоматическое скрытие через 5 секунд
+            setTimeout(() => {
+                notification.style.transform = 'translateX(400px)';
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.parentNode.removeChild(notification);
+                    }
+                }, 300);
+            }, 5000);
+            
+        } catch (error) {
+            console.error('Ошибка показа уведомления:', error);
+        }
+    };
+
+    // Функция для обновления счетчика непрочитанных сообщений
+    const updateUnreadCount = async (senderId) => {
+        try {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+            
+            // Получаем количество непрочитанных сообщений
+            const response = await fetch(`/api/messages-read/${senderId}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                const unreadCount = data.unreadCount || 0;
+                
+                // Обновляем счетчик в контактах
+                setTelegramContacts(prev => 
+                    prev.map(contact => 
+                        contact.id === senderId 
+                            ? { ...contact, unreadCount: unreadCount }
+                            : contact
+                    )
+                );
+            }
+        } catch (error) {
+            console.error('Ошибка обновления счетчика непрочитанных сообщений:', error);
+        }
+    };
+
+    // Функция показа подсказки об управлении камерой
+    function showCameraControlsHint() {
+        const hint = document.createElement('div');
+        hint.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            font-family: system-ui, Arial, sans-serif;
+            font-size: 14px;
+            z-index: 9999;
+            max-width: 300px;
+            animation: fadeIn 0.5s ease-in;
+        `;
+        
+        hint.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 8px;">🎮 Управление камерой:</div>
+            <div style="margin-bottom: 5px;">• <strong>Ctrl + колесо</strong> = вертикальный поворот</div>
+            <div style="margin-bottom: 5px;">• <strong>Shift + Ctrl + колесо</strong> = горизонтальный поворот</div>
+            <div style="font-size: 12px; opacity: 0.8;">Подсказка исчезнет через 10 секунд</div>
+        `;
+        
+        // Добавляем CSS анимацию
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        document.body.appendChild(hint);
+        
+        // Автоматически скрываем через 10 секунд
+        setTimeout(() => {
+            hint.style.animation = 'fadeOut 0.5s ease-out';
+            hint.style.opacity = '0';
+            setTimeout(() => hint.remove(), 500);
+        }, 10000);
+        
+        // Добавляем CSS для fadeOut
+        if (!document.querySelector('#hint-styles')) {
+            const fadeOutStyle = document.createElement('style');
+            fadeOutStyle.id = 'hint-styles';
+            fadeOutStyle.textContent = `
+                @keyframes fadeOut {
+                    from { opacity: 1; transform: translateY(0); }
+                    to { opacity: 0; transform: translateY(20px); }
+                }
+            `;
+            document.head.appendChild(fadeOutStyle);
+        }
+    }
+    
+    // Функция показа уведомления о перезагрузке сервера
+    function showServerRestartNotification(message, restartIn) {
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #dc2626;
+            color: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            z-index: 10001;
+            max-width: 400px;
+            font-family: system-ui, Arial, sans-serif;
+            text-align: center;
+            animation: serverRestartPulse 2s infinite;
+        `;
+        
+        notification.innerHTML = `
+            <div style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">⚠️ Перезагрузка сервера</div>
+            <div style="font-size: 14px; margin-bottom: 15px;">${message}</div>
+            <div style="font-size: 12px; opacity: 0.8;">Перезагрузка через: <span id="restart-countdown">${Math.ceil(restartIn/1000)}</span> сек</div>
+        `;
+        
+        // Добавляем CSS анимацию
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes serverRestartPulse {
+                0%, 100% { transform: translate(-50%, -50%) scale(1); }
+                50% { transform: translate(-50%, -50%) scale(1.05); }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        document.body.appendChild(notification);
+        
+        // Обновляем счетчик
+        const countdownEl = notification.querySelector('#restart-countdown');
+        const startTime = Date.now();
+        const countdownInterval = setInterval(() => {
+            const remaining = Math.max(0, restartIn - (Date.now() - startTime));
+            if (countdownEl) {
+                countdownEl.textContent = Math.ceil(remaining/1000);
+            }
+            if (remaining <= 0) {
+                clearInterval(countdownInterval);
+                notification.remove();
+            }
+        }, 100);
+        
+        // Автоматически скрываем через время перезагрузки
+        setTimeout(() => {
+            clearInterval(countdownInterval);
+            notification.remove();
+        }, restartIn);
+    }
 
     // Функция загрузки сообщений
     async function loadMessages(contactId) {
@@ -1910,11 +2135,18 @@ function Game({ avatarUrl, gender }) {
         }
 
         // ─────────────────────────────────────────────
-        // Красивый загрузочный оверлей + LoadingManager
+        // Улучшенный загрузочный оверлей + LoadingManager
         // ─────────────────────────────────────────────
         let overlayEl = null, barEl = null, textEl = null;
+        let isInitialLoad = true; // Флаг для определения начальной загрузки
+        
         function createLoadingOverlay() {
             if (overlayEl) return;
+            // Дополнительная проверка - не показываем overlay для очень маленьких загрузок
+            if (!isInitialLoad && loadingManagerRef.current && loadingManagerRef.current.itemStart) {
+                const currentTotal = loadingManagerRef.current.itemStart.length || 0;
+                if (currentTotal <= 3) return; // Не показываем для загрузки 3 или меньше ресурсов
+            }
             overlayEl = document.createElement('div');
             Object.assign(overlayEl.style, {
                 position: 'fixed', inset: '0', zIndex: 2000,
@@ -1951,6 +2183,7 @@ function Game({ avatarUrl, gender }) {
             overlayEl.appendChild(pct);
             document.body.appendChild(overlayEl);
         }
+        
         function updateLoadingOverlay(percent, text) {
             if (!overlayEl) return;
             const p = Math.max(0, Math.min(100, Math.round(percent || 0)));
@@ -1959,8 +2192,16 @@ function Game({ avatarUrl, gender }) {
             if (pct) pct.textContent = p + '%';
             if (text && textEl) textEl.textContent = text;
         }
+        
         function removeLoadingOverlay() {
             if (!overlayEl) return;
+            
+            // Очищаем все таймеры overlay
+            if (overlayTimeoutRef.current) {
+                clearTimeout(overlayTimeoutRef.current);
+                overlayTimeoutRef.current = null;
+            }
+            
             overlayEl.style.transition = 'opacity .2s ease';
             overlayEl.style.opacity = '0';
             setTimeout(() => {
@@ -1968,19 +2209,62 @@ function Game({ avatarUrl, gender }) {
                 overlayEl = barEl = textEl = null;
             }, 220);
         }
+        
         // Общий менеджер загрузки (для GLTF/Texture и т.п.)
         const loadingManager = new THREE.LoadingManager();
         loadingManagerRef.current = loadingManager;
+        
         loadingManager.onStart = (_url, loaded, total) => {
-            createLoadingOverlay();
-            updateLoadingOverlay(total ? (loaded / total) * 100 : 5, 'Загрузка ресурсов...');
+            console.log(`LoadingManager.onStart: isInitialLoad=${isInitialLoad}, total=${total}, url=${_url}`);
+            // Показываем оверлей только при начальной загрузке или при загрузке большого количества ресурсов
+            if (isInitialLoad || total > 10) {
+                console.log('Показываем overlay для загрузки');
+                createLoadingOverlay();
+                updateLoadingOverlay(total ? (loaded / total) * 100 : 5, 'Загрузка ресурсов...');
+            } else {
+                console.log('Не показываем overlay - небольшая загрузка');
+            }
         };
+        
         loadingManager.onProgress = (_url, loaded, total) => {
-            updateLoadingOverlay(total ? (loaded / total) * 100 : 50);
+            if (overlayEl && (isInitialLoad || total > 10)) {
+                updateLoadingOverlay(total ? (loaded / total) * 100 : 50);
+            }
         };
+        
         loadingManager.onLoad = () => {
-            updateLoadingOverlay(100, 'Инициализация сцены...');
-            setTimeout(removeLoadingOverlay, 150);
+            console.log(`LoadingManager.onLoad: isInitialLoad=${isInitialLoad}, overlayEl=${!!overlayEl}`);
+            if (overlayEl) {
+                // Показываем "Инициализация сцены" только для начальной загрузки
+                if (isInitialLoad) {
+                    console.log('Показываем "Инициализация сцены" для начальной загрузки');
+                    updateLoadingOverlay(100, 'Инициализация сцены...');
+                    setTimeout(removeLoadingOverlay, 150);
+                } else {
+                    // Для небольших загрузок просто скрываем overlay
+                    console.log('Скрываем overlay для небольшой загрузки');
+                    removeLoadingOverlay();
+                }
+            }
+            isInitialLoad = false; // После первой загрузки сбрасываем флаг
+            
+                                // Дополнительная защита - принудительно скрываем overlay через 3 секунды
+            if (overlayEl) {
+                overlayTimeoutRef.current = setTimeout(() => {
+                    if (overlayEl) {
+                        console.log('Принудительно скрываем overlay по таймауту');
+                        removeLoadingOverlay();
+                    }
+                }, 3000);
+            }
+            
+            // Глобальная защита - принудительно скрываем overlay через 5 секунд после начала игры
+            overlayTimeoutRef.current = setTimeout(() => {
+                if (overlayEl && !isInitialLoad) {
+                    console.log('Глобальная защита: принудительно скрываем overlay');
+                    removeLoadingOverlay();
+                }
+            }, 5000);
         };
 
 
@@ -1989,7 +2273,7 @@ function Game({ avatarUrl, gender }) {
         const baseOffset = new THREE.Vector3(-200, 150, -200);
         const planarDist = Math.hypot(baseOffset.x, baseOffset.z);
         const radius = Math.hypot(planarDist, baseOffset.y);
-        const baseAzimuth = Math.atan2(baseOffset.z, baseOffset.x);
+        let baseAzimuth = Math.atan2(baseOffset.z, baseOffset.x);
         const basePolar = Math.atan2(baseOffset.y, planarDist);
 
         let cameraPitchOffset = 0;
@@ -2068,6 +2352,19 @@ function Game({ avatarUrl, gender }) {
             const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
             if (p?.id) socket.emit('economy:getBalance', { userId: p.id });
         }, 3000);
+        
+        // Периодическое обновление статуса пользователей для Telegram
+        const statusInterval = setInterval(() => {
+            if (activeApp === "Telegram" && telegramContacts.length > 0) {
+                loadTelegramContacts();
+                // Обновляем счетчики непрочитанных сообщений для всех контактов
+                telegramContacts.forEach(contact => {
+                    if (contact.id !== profile.id) {
+                        updateUnreadCount(contact.id);
+                    }
+                });
+            }
+        }, 30000); // Обновляем каждые 30 секунд
         socket.on('economy:balanceChanged', ({ userId, newBalance }) => {
             if (userId === profile.id) {
                 setBalance(newBalance);
@@ -2078,6 +2375,38 @@ function Game({ avatarUrl, gender }) {
         socket.emit('economy:getInventory', { userId: profile.id });
         socket.on('economy:inventory', setInventory);
         socket.on('gameTime:update', ({ time }) => setGameTime(time));
+        
+            // Обработчик изменения статуса пользователей для Telegram
+    socket.on('userStatusChanged', ({ userId, isOnline }) => {
+        console.log('Статус пользователя изменился:', { userId, isOnline });
+        setTelegramContacts(prev => prev.map(user => 
+            user.id === userId ? { ...user, isOnline } : user
+        ));
+    });
+    
+            // Обработчик новых сообщений для уведомлений
+        socket.on('newMessage', ({ id, text, senderId, timestamp, isRead }) => {
+            console.log('Новое сообщение:', { id, text, senderId, timestamp, isRead });
+            
+            // Показываем уведомление только если Telegram не открыт
+            if (activeApp !== "Telegram") {
+                showMessageNotification(senderId, text);
+            }
+            
+            // Обновляем счетчик непрочитанных сообщений
+            updateUnreadCount(senderId);
+            
+            // Обновляем список сообщений если открыт чат с этим пользователем
+            if (activeChat && activeChat.id === senderId) {
+                loadMessages(senderId);
+            }
+        });
+        
+        // Обработчик перезагрузки сервера
+        socket.on('serverRestart', ({ message, restartIn }) => {
+            console.log('Сервер будет перезагружен:', { message, restartIn });
+            showServerRestartNotification(message, restartIn);
+        });
         // Лоадеры, учитывающиеся в прогрессе через loadingManagerRef
         const gltfLoader = new GLTFLoader(loadingManagerRef.current || undefined);
         const animLoader = new GLTFLoader(loadingManagerRef.current || undefined);
@@ -2618,11 +2947,23 @@ function Game({ avatarUrl, gender }) {
             const delta = -e.deltaY * 0.001;
 
             if (e.ctrlKey) {
+                // При нажатом Ctrl управляем и вертикальным, и горизонтальным углом камеры
+                if (e.shiftKey) {
+                    // Shift + Ctrl + колесо = горизонтальный поворот (влево-вправо)
+                    const horizontalDelta = delta * 2; // Увеличиваем чувствительность
+                    baseAzimuth = THREE.MathUtils.clamp(
+                        baseAzimuth + horizontalDelta,
+                        -Math.PI / 2, // -90 градусов
+                        Math.PI / 2    // +90 градусов
+                    );
+                } else {
+                    // Ctrl + колесо = вертикальный поворот (вверх-вниз)
                 cameraPitchOffset = THREE.MathUtils.clamp(
                     cameraPitchOffset + delta,
                     -maxPitch,
                     maxPitch
                 );
+                }
             } else {
                 if (cameraRef.current === orthoCamRef.current) {
                     zoom = THREE.MathUtils.clamp(zoom * (1 + delta), minZoom, maxZoom);
@@ -3531,6 +3872,26 @@ function Game({ avatarUrl, gender }) {
                 setShowInventory(v => !v);
             }
 
+            // Ctrl + Arrow keys for camera control
+            if (event.ctrlKey) {
+                const key = event.key.toLowerCase();
+                if (key === 'arrowleft') {
+                    const horizontalDelta = -0.1; // Поворот влево
+                    baseAzimuth = THREE.MathUtils.clamp(
+                        baseAzimuth + horizontalDelta,
+                        -Math.PI / 2, // -90 градусов
+                        Math.PI / 2    // +90 градусов
+                    );
+                } else if (key === 'arrowright') {
+                    const horizontalDelta = 0.1; // Поворот вправо
+                    baseAzimuth = THREE.MathUtils.clamp(
+                        baseAzimuth + horizontalDelta,
+                        -Math.PI / 2, // -90 градусов
+                        Math.PI / 2    // +90 градусов
+                    );
+                }
+            }
+
             // Сбрасываем назначение только если не в интерьере
             if (!isInInteriorRef.current) {
                 destination = null;
@@ -3846,6 +4207,7 @@ function Game({ avatarUrl, gender }) {
             // Поворот влево-вправо (A/D или стрелки)
             if (move.left) player.rotation.y += rotSpeed * delta;
             if (move.right) player.rotation.y -= rotSpeed * delta;
+            
             // Камера следует за вращением тела
             const headHeight = 1.6;
             const camBase = new THREE.Vector3(player.position.x, player.position.y + headHeight, player.position.z);
@@ -3854,45 +4216,96 @@ function Game({ avatarUrl, gender }) {
             const lookForward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, player.rotation.y, 0));
             fpCamRef.current.lookAt(fpCamRef.current.position.clone().add(lookForward));
 
-            // Движение с проверкой коллизий
+            // Улучшенное движение с проверкой коллизий и предотвращением застревания
             const tryMove = (dirVec) => {
-                const candidate = player.position.clone().addScaledVector(dirVec, speed * delta);
-                // Обновляем AABB игрока (простая капсула не используется, только коробка)
-                const half = 0.25; // чуточку уже, чтобы не цепляться за стены
-                const height = 1.7; // немного ниже, чтобы не пересекать потолок
+                const stepDistance = speed * delta;
+                const candidate = player.position.clone().addScaledVector(dirVec, stepDistance);
+                
+                // Обновляем AABB игрока с меньшими размерами для предотвращения застревания
+                const half = 0.2; // Уменьшаем размер для лучшего прохождения
+                const height = 1.6; // Немного ниже для предотвращения застревания в потолке
                 const playerBox = new THREE.Box3(
                     new THREE.Vector3(candidate.x - half, candidate.y, candidate.z - half),
                     new THREE.Vector3(candidate.x + half, candidate.y + height, candidate.z + half)
                 );
+                
                 // Обновляем мировые матрицы статических коллайдеров для корректных AABB
-                try { interiorGroupRef.current && interiorGroupRef.current.updateMatrixWorld(true); } catch (_) { }
+                try { 
+                    interiorGroupRef.current && interiorGroupRef.current.updateMatrixWorld(true); 
+                } catch (_) { }
 
-                // В интерьере учитываем только внутренние коллайдеры, без городских объектов
+                // В интерьере учитываем только внутренние коллайдеры
                 const blockingMeshes = Array.isArray(interiorCollidersRef.current)
                     ? interiorCollidersRef.current
                     : [];
 
                 let hits = false;
+                let closestDistance = Infinity;
+                let slideDirection = null;
+
                 for (const mesh of blockingMeshes) {
                     if (!mesh) continue;
                     const box = new THREE.Box3().setFromObject(mesh);
-                    // небольшой зазор, чтобы скользить вдоль стен
-                    const expanded = box.clone().expandByScalar(0.01);
-                    if (expanded.intersectsBox(playerBox)) { hits = true; break; }
+                    const expanded = box.clone().expandByScalar(0.05); // Увеличиваем зазор
+                    
+                    if (expanded.intersectsBox(playerBox)) {
+                        hits = true;
+                        
+                        // Вычисляем направление скольжения вдоль стены
+                        const center = box.getCenter(new THREE.Vector3());
+                        const toPlayer = player.position.clone().sub(center);
+                        const distance = toPlayer.length();
+                        
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            // Нормализуем и создаем направление скольжения
+                            toPlayer.normalize();
+                            slideDirection = toPlayer;
+                        }
+                    }
                 }
+
                 if (!hits) {
+                    // Свободное движение
                     player.position.copy(candidate);
+                } else if (slideDirection) {
+                    // Скольжение вдоль стены
+                    const slideDistance = stepDistance * 0.7; // Уменьшаем дистанцию скольжения
+                    const slidePos = player.position.clone().addScaledVector(slideDirection, slideDistance);
+                    
+                    // Проверяем, можно ли двигаться в направлении скольжения
+                    const slideBox = new THREE.Box3(
+                        new THREE.Vector3(slidePos.x - half, slidePos.y, slidePos.z - half),
+                        new THREE.Vector3(slidePos.x + half, slidePos.y + height, slidePos.z + half)
+                    );
+                    
+                    let canSlide = true;
+                    for (const mesh of blockingMeshes) {
+                        if (!mesh) continue;
+                        const box = new THREE.Box3().setFromObject(mesh);
+                        const expanded = box.clone().expandByScalar(0.05);
+                        if (expanded.intersectsBox(slideBox)) {
+                            canSlide = false;
+                            break;
+                        }
+                    }
+                    
+                    if (canSlide) {
+                        player.position.copy(slidePos);
+                    }
                 }
             };
 
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
             const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
+            
+            // Применяем движение с плавностью
             if (move.forward) tryMove(forward);
             if (move.backward) tryMove(forward.clone().multiplyScalar(-1));
             if (move.strafeLeft) tryMove(right.clone().multiplyScalar(-1));
             if (move.strafeRight) tryMove(right);
 
-            // Отправляем позицию внутри интерьера, чтобы нас видели другие внутри
+            // Отправляем позицию внутри интерьера
             if (socketRef.current) {
                 socketRef.current.emit('playerMovement', { x: player.position.x, y: player.position.y, z: player.position.z });
             }
@@ -4028,9 +4441,38 @@ function Game({ avatarUrl, gender }) {
             }
         }
         window.addEventListener('resize', onWindowResize, false);
+        
+        // Отключаем браузерное масштабирование
+        document.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && (e.key === '+' || e.key === '-' || e.key === '=')) {
+                e.preventDefault();
+            }
+        });
+        
+        // Показываем подсказку об управлении камерой
+        setTimeout(() => {
+            showCameraControlsHint();
+        }, 3000);
 
         return () => {
             clearInterval(balanceInterval);
+            clearInterval(statusInterval);
+            
+            // Очищаем overlay загрузки
+            if (overlayEl) {
+                removeLoadingOverlay();
+            }
+            
+            // Очищаем все таймеры overlay
+            if (overlayTimeoutRef.current) {
+                clearTimeout(overlayTimeoutRef.current);
+            }
 
             // Очищаем таймеры throttling
             if (wheelTimeout) {
@@ -5632,13 +6074,68 @@ function Game({ avatarUrl, gender }) {
                                                 )}
                                                 {telegramContacts.map((user) => (
                                                     <div key={user.id} onClick={() => setActiveChat(user)} style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#111' }}>
+                                                        <div style={{ position: 'relative' }}>
                                                         <div style={{ width: 28, height: 28, borderRadius: 14, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
                                                             {user.firstName?.[0]}{user.lastName?.[0]}
+                                                            </div>
+                                                            {user.isOnline && (
+                                                                <div style={{
+                                                                    position: 'absolute',
+                                                                    bottom: 0,
+                                                                    right: 0,
+                                                                    width: 10,
+                                                                    height: 10,
+                                                                    borderRadius: 5,
+                                                                    background: '#10b981',
+                                                                    border: '2px solid #fff',
+                                                                    boxShadow: '0 0 0 1px #e5e7eb'
+                                                                }} />
+                                                            )}
                                                         </div>
-                                                        <div style={{ overflow: 'hidden' }}>
-                                                            <div style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.firstName} {user.lastName}</div>
-                                                            <div style={{ fontSize: 12, color: '#6b7280' }}>Онлайн</div>
+                                                        <div style={{ overflow: 'hidden', flex: 1 }}>
+                                                            <div style={{ 
+                                                                whiteSpace: 'nowrap', 
+                                                                textOverflow: 'ellipsis', 
+                                                                overflow: 'hidden',
+                                                                fontWeight: user.unreadCount > 0 ? 'bold' : 'normal'
+                                                            }}>
+                                                                {`${user.firstName || ''} ${user.lastName || ''}`}
+                                                            </div>
+                                                            <div style={{ 
+                                                                fontSize: 12, 
+                                                                color: user.isOnline ? '#10b981' : '#6b7280',
+                                                                fontWeight: user.isOnline ? 600 : 400
+                                                            }}>
+                                                                {user.isOnline ? 'Онлайн' : (
+                                                                    user.lastSeen ? 
+                                                                    `Был(а) ${new Date(user.lastSeen).toLocaleString('ru-RU', {
+                                                                        month: 'short',
+                                                                        day: 'numeric',
+                                                                        hour: '2-digit',
+                                                                        minute: '2-digit'
+                                                                    })}` : 
+                                                                    'Офлайн'
+                                                                )}
+                                                            </div>
                                                         </div>
+                                                        {/* Счетчик непрочитанных сообщений */}
+                                                        {user.unreadCount > 0 && (
+                                                            <div style={{
+                                                                background: '#ef4444',
+                                                                color: 'white',
+                                                                borderRadius: '50%',
+                                                                minWidth: '20px',
+                                                                height: '20px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontSize: '12px',
+                                                                fontWeight: 'bold',
+                                                                padding: '2px'
+                                                            }}>
+                                                                {user.unreadCount > 99 ? '99+' : user.unreadCount}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
