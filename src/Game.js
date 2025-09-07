@@ -78,6 +78,11 @@ function Game({ avatarUrl, gender }) {
     const [inventory, setInventory] = useState([]);
     const [showInventory, setShowInventory] = useState(false);
     const [gameTime, setGameTime] = useState(null);
+    // Сеть
+    const [connectionLost, setConnectionLost] = useState(false);
+    const [latencyMs, setLatencyMs] = useState(null);
+    const connectionLostRef = useRef(false);
+    useEffect(() => { connectionLostRef.current = connectionLost; }, [connectionLost]);
     const [balance, setBalance] = useState(() => {
         const p = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         return p.balance ?? 0;
@@ -2274,6 +2279,8 @@ function Game({ avatarUrl, gender }) {
         const planarDist = Math.hypot(baseOffset.x, baseOffset.z);
         const radius = Math.hypot(planarDist, baseOffset.y);
         let baseAzimuth = Math.atan2(baseOffset.z, baseOffset.x);
+        const baseAzimuth0 = baseAzimuth;
+        let horizontalYaw = 0; // относительный поворот (±90°) от исходного
         const basePolar = Math.atan2(baseOffset.y, planarDist);
 
         let cameraPitchOffset = 0;
@@ -2326,24 +2333,93 @@ function Game({ avatarUrl, gender }) {
         });
         const socket = socketRef.current;
 
+        async function loadCustomCollidersForCity(cityIdParam) {
+            try {
+                const cityIdNum = Number(cityIdParam) || 0;
+                const query = cityIdNum ? `?cityId=${encodeURIComponent(cityIdNum)}` : '';
+                const res = await fetch(`/api/colliders${query}`, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+                if (!res.ok) return;
+                const data = await res.json();
+                const list = Array.isArray(data?.colliders) ? data.colliders : [];
+                // Удаляем старые кастомные коллайдеры
+                obstacles = obstacles.filter(o => {
+                    const keep = !o?.mesh?.userData?.isCustomCollider;
+                    if (!keep && o.mesh) {
+                        scene.remove(o.mesh);
+                    }
+                    return keep;
+                });
+                // Добавляем новые
+                list.forEach(c => {
+                    let geometry;
+                    if (c.type === 'circle') geometry = new THREE.CylinderGeometry(1.5, 1.5, 2, 24);
+                    else if (c.type === 'capsule') geometry = new THREE.CapsuleGeometry(1, 2, 4, 12);
+                    else geometry = new THREE.BoxGeometry(2, 2, 2);
+                    const material = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.001, depthWrite: false });
+                    const mesh = new THREE.Mesh(geometry, material);
+                    const p = c.position || {}; const r = c.rotation || {}; const s = c.scale || {};
+                    mesh.position.set(p.x || 0, p.y || 0, p.z || 0);
+                    mesh.rotation.set(r.x || 0, r.y || 0, r.z || 0);
+                    mesh.scale.set(s.x || 1, s.y || 1, s.z || 1);
+                    mesh.userData.isCustomCollider = true;
+                    scene.add(mesh);
+                    obstacles.push({ mesh });
+                });
+                buildPathfindingGrid?.();
+            } catch (e) {
+                console.warn('Не удалось загрузить colliders.json', e);
+            }
+        }
+
         console.log('socket инстанс:', socket);
         console.log('Подключение к серверу:', serverUrl);
 
         socket.on('connect', () => {
             console.log('✔ Socket connected, id=', socket.id);
             console.log('Подключение успешно установлено');
+            setConnectionLost(false);
+            // Подписка на ping/pong менеджера Socket.IO для измерения задержки
+            try {
+                const mgr = socket.io;
+                if (mgr && typeof mgr.on === 'function') {
+                    mgr.off?.('pong');
+                    mgr.on('pong', (latency) => {
+                        if (typeof latency === 'number' && isFinite(latency)) {
+                            setLatencyMs(Math.round(latency));
+                        }
+                    });
+                }
+            } catch (e) { /* noop */ }
         });
+
+        // Загрузка пользовательских коллайдеров при старте (по текущему городу)
+        try {
+            const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
+            const initialCityId = profile.last_city_id || 1;
+            loadCustomCollidersForCity(initialCityId);
+        } catch {}
 
         socket.on('connect_error', err => {
             console.error('Socket connect_error:', err);
             console.error('Ошибка подключения к серверу:', serverUrl);
             console.error('Проверьте, что сервер запущен на порту 4000');
+            setConnectionLost(true);
         });
 
         socket.on('disconnect', reason => {
             console.warn('Socket disconnected:', reason);
             console.warn('Соединение разорвано, причина:', reason);
+            setConnectionLost(true);
         });
+
+        // Небольшой таймер для обновления latency при отсутствии событий
+        const pingTimer = setInterval(() => {
+            const s = socketRef.current;
+            if (!s || s.disconnected) return;
+            // менеджер сам шлёт ping с интервалом, мы лишь не даём UI "застывать"
+            // если давно не было pong — считаем соединение деградировало
+            setLatencyMs((prev) => (prev == null ? prev : Math.min(prev + 1, 999)));
+        }, 1000);
         const profile = JSON.parse(sessionStorage.getItem('user_profile') || '{}');
         if (profile?.id) {
             socket.emit('economy:getBalance', { userId: profile.id });
@@ -2949,12 +3025,12 @@ function Game({ avatarUrl, gender }) {
             if (e.ctrlKey) {
                 // При нажатом Ctrl управляем и вертикальным, и горизонтальным углом камеры
                 if (e.shiftKey) {
-                    // Shift + Ctrl + колесо = горизонтальный поворот (влево-вправо)
+                    // Shift + Ctrl + колесо = горизонтальный поворот (влево-вправо) относительно исходного азимута
                     const horizontalDelta = delta * 2; // Увеличиваем чувствительность
-                    baseAzimuth = THREE.MathUtils.clamp(
-                        baseAzimuth + horizontalDelta,
-                        -Math.PI / 2, // -90 градусов
-                        Math.PI / 2    // +90 градусов
+                    horizontalYaw = THREE.MathUtils.clamp(
+                        horizontalYaw + horizontalDelta,
+                        -Math.PI / 2,
+                        Math.PI / 2
                     );
                 } else {
                     // Ctrl + колесо = вертикальный поворот (вверх-вниз)
@@ -3876,19 +3952,9 @@ function Game({ avatarUrl, gender }) {
             if (event.ctrlKey) {
                 const key = event.key.toLowerCase();
                 if (key === 'arrowleft') {
-                    const horizontalDelta = -0.1; // Поворот влево
-                    baseAzimuth = THREE.MathUtils.clamp(
-                        baseAzimuth + horizontalDelta,
-                        -Math.PI / 2, // -90 градусов
-                        Math.PI / 2    // +90 градусов
-                    );
+                    horizontalYaw = THREE.MathUtils.clamp(horizontalYaw - 0.1, -Math.PI / 2, Math.PI / 2);
                 } else if (key === 'arrowright') {
-                    const horizontalDelta = 0.1; // Поворот вправо
-                    baseAzimuth = THREE.MathUtils.clamp(
-                        baseAzimuth + horizontalDelta,
-                        -Math.PI / 2, // -90 градусов
-                        Math.PI / 2    // +90 градусов
-                    );
+                    horizontalYaw = THREE.MathUtils.clamp(horizontalYaw + 0.1, -Math.PI / 2, Math.PI / 2);
                 }
             }
 
@@ -3915,15 +3981,15 @@ function Game({ avatarUrl, gender }) {
 
         function createPlayerLabel(text) {
             const canvas = document.createElement('canvas');
-            canvas.width = 512; // Увеличиваем размер canvas
-            canvas.height = 128;
+            canvas.width = 1024; // Увеличиваем размер canvas
+            canvas.height = 256;
             const ctx = canvas.getContext('2d');
 
             // Добавляем фон для лучшей видимости
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            const fontSize = 32; // Увеличиваем размер шрифта
+            const fontSize = 72; // Увеличиваем размер шрифта
             ctx.fillStyle = 'white';
             ctx.font = `bold ${fontSize}px Arial`;
 
@@ -3946,7 +4012,7 @@ function Game({ avatarUrl, gender }) {
                 depthWrite: false
             });
             const sprite = new THREE.Sprite(spriteMaterial);
-            sprite.scale.set(1, 0.25, 1); // Увеличиваем размер спрайта
+            sprite.scale.set(2.2, 0.55, 1); // Увеличиваем размер спрайта
 
             // ↓↓↓ добавь это ↓↓↓
             sprite.raycast = () => { };
@@ -3994,6 +4060,27 @@ function Game({ avatarUrl, gender }) {
             return true;
         }
 
+        // Подсчёт количества пересечений с препятствиями для позиции (для "саморазблокировки")
+        function countIntersectionsAtPosition(pos, halfSize = 1) {
+            const playerMin = new THREE.Vector2(pos.x - halfSize, pos.z - halfSize);
+            const playerMax = new THREE.Vector2(pos.x + halfSize, pos.z + halfSize);
+
+            let count = 0;
+            for (let i = 0; i < obstacles.length; i++) {
+                const mesh = obstacles[i]?.mesh;
+                if (!mesh) continue;
+                mesh.updateMatrixWorld();
+                const box = new THREE.Box3().setFromObject(mesh);
+                const obstacleMin = new THREE.Vector2(box.min.x, box.min.z);
+                const obstacleMax = new THREE.Vector2(box.max.x, box.max.z);
+                if ((playerMin.x <= obstacleMax.x && playerMax.x >= obstacleMin.x) &&
+                    (playerMin.y <= obstacleMax.y && playerMax.y >= obstacleMin.y)) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
         function updateDestinationMovement(delta) {
             if (!player || currentPath.length === 0 || pathIndex >= currentPath.length) return;
 
@@ -4004,7 +4091,29 @@ function Game({ avatarUrl, gender }) {
 
             const stepDistance = moveSpeed * delta;
             if (dist < stepDistance) {
+                // Двигаем к точке и аккуратно выравниваем по верхней поверхности
                 player.position.copy(target);
+                // Жёсткое выравнивание по топ-поверхности, чтобы исключить спад до y=0 на остановке
+                (function alignGroundFinal(p) {
+                    const downRay = new THREE.Raycaster(
+                        new THREE.Vector3(p.x, 100, p.z),
+                        new THREE.Vector3(0, -1, 0),
+                        0,
+                        300
+                    );
+                    downRay.camera = cameraRef.current;
+                    const walkables = [
+                        ...(cityGroupRef.current ? [cityGroupRef.current] : []),
+                        groundPlane,
+                        ...(cityMeshesRef.current || [])
+                    ].filter(Boolean);
+                    const raw = downRay.intersectObjects(walkables, true);
+                    const isDescendantOf = (obj, ancestor) => { let c=obj; while(c){ if(c===ancestor) return true; c=c.parent;} return false; };
+                    const hits = raw
+                        .filter(h => !h.object.isSprite && h.face && h.face.normal && h.face.normal.y > 0.6)
+                        .filter(h => !isDescendantOf(h.object, player));
+                    if (hits.length) p.y = hits[0].point.y + 0.02;
+                })(player.position);
                 pathIndex++;
                 blockedTime = 0;
                 if (pathIndex >= currentPath.length) {
@@ -4022,6 +4131,16 @@ function Game({ avatarUrl, gender }) {
             dir.normalize();
             const step = dir.clone().multiplyScalar(stepDistance);
 
+            // 1) Поворот всегда догоняет, движение начинается сразу — естественное скольжение в сторону цели
+            const desiredYaw = Math.atan2(dir.x, dir.z);
+            const currentYaw = new THREE.Euler().setFromQuaternion(player.quaternion, 'YXZ').y;
+            let yawDiff = desiredYaw - currentYaw;
+            yawDiff = ((yawDiff + Math.PI) % (2 * Math.PI)) - Math.PI; // нормализация [-PI, PI]
+            const maxTurnRate = 3.0; // рад/сек — ограничиваем скорость поворота
+            const stepAngle = THREE.MathUtils.clamp(yawDiff, -maxTurnRate * delta, maxTurnRate * delta);
+            const newYawFollow = currentYaw + stepAngle;
+            player.quaternion.setFromEuler(new THREE.Euler(0, newYawFollow, 0));
+
             // Кандидаты перемещения: прямо, слайд по X, слайд по Z
             const tryMoves = [
                 player.position.clone().add(step),
@@ -4029,7 +4148,7 @@ function Game({ avatarUrl, gender }) {
                 player.position.clone().add(new THREE.Vector3(0, 0, step.z))
             ];
 
-            // Помощник: «привязка» к верхней поверхности
+            // Помощник: «привязка» к верхней поверхности (учитываем всю геометрию города)
             const stickToTopSurface = (pos) => {
                 const downRay = new THREE.Raycaster(
                     new THREE.Vector3(pos.x, 100, pos.z),
@@ -4039,12 +4158,21 @@ function Game({ avatarUrl, gender }) {
                 );
                 downRay.camera = cameraRef.current; // важное дополнение для спрайтов
 
-                // фильтруем null/undefined
-                const walkables = [groundPlane, ...(cityMeshesRef.current || [])].filter(Boolean);
+                // фильтруем null/undefined и целимся в корневую группу города + groundPlane
+                const walkables = [
+                    ...(cityGroupRef.current ? [cityGroupRef.current] : []),
+                    groundPlane,
+                    ...(cityMeshesRef.current || [])
+                ].filter(Boolean);
 
-                const hits = downRay
-                    .intersectObjects(walkables, true)
-                    .filter(h => !h.object.isSprite && h.face && h.face.normal && h.face.normal.y > 0.6);
+                const raw = downRay.intersectObjects(walkables, true);
+                const isDescendantOf = (obj, ancestor) => {
+                    let cur = obj; while (cur) { if (cur === ancestor) return true; cur = cur.parent; }
+                    return false;
+                };
+                const hits = raw
+                    .filter(h => !h.object.isSprite && h.face && h.face.normal && h.face.normal.y > 0.6)
+                    .filter(h => !isDescendantOf(h.object, player));
 
                 if (hits.length) {
                     pos.y = hits[0].point.y + 0.02; // лёгкий "антизалип"
@@ -4063,10 +4191,59 @@ function Game({ avatarUrl, gender }) {
                 }
             }
 
+            // Саморазблокировка: если не удалось пройти обычной проверкой, но текущая клетка непроходима,
+            // ищем ближайшее направление с уменьшением количества пересечений и прогрессом к цели
+            if (!moved) {
+                const currentIntersections = countIntersectionsAtPosition(player.position, 1);
+                if (currentIntersections > 0) {
+                    const radii = [stepDistance * 0.6, stepDistance * 1.0, stepDistance * 1.6];
+                    const angles = 24; // 15° шаг
+                    let bestPos = null;
+                    let bestScore = currentIntersections;
+                    let bestDist = Infinity;
+                    const escapeHalf = 0.6; // слегка ужимаем хитбокс при выходе
+                    for (const r of radii) {
+                        for (let i = 0; i < angles; i++) {
+                            const a = (i / angles) * Math.PI * 2;
+                            const dir2 = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
+                            const cand = player.position.clone().addScaledVector(dir2, r);
+                            const score = countIntersectionsAtPosition(cand, escapeHalf);
+                            const distToTarget = cand.distanceTo(target);
+                            if (
+                                score < bestScore ||
+                                (score === bestScore && distToTarget < bestDist)
+                            ) {
+                                bestScore = score;
+                                bestDist = distToTarget;
+                                bestPos = cand;
+                                if (bestScore === 0) break;
+                            }
+                        }
+                        if (bestScore === 0) break;
+                    }
+                    if (bestPos) {
+                        stickToTopSurface(bestPos);
+                        player.position.copy(bestPos);
+                        moved = true;
+                        blockedTime = 0;
+                    } else {
+                        // Последняя попытка: небольшая "встряска" вверх и повторное прилипание к поверхности
+                        const nudged = player.position.clone();
+                        nudged.y += 0.05;
+                        stickToTopSurface(nudged);
+                        player.position.copy(nudged);
+                    }
+                }
+            }
+
             if (moved) {
-                const angle = Math.atan2(dir.x, dir.z);
-                const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, angle, 0));
-                player.quaternion.slerp(targetQuat, Math.min(1, 10 * delta));
+                // Плавный доворот в сторону движения, но движение идёт сразу
+                const curYaw = new THREE.Euler().setFromQuaternion(player.quaternion, 'YXZ').y;
+                let d = desiredYaw - curYaw;
+                d = ((d + Math.PI) % (2 * Math.PI)) - Math.PI;
+                const rotStep = THREE.MathUtils.clamp(d, -maxTurnRate * delta, maxTurnRate * delta);
+                const newYaw = curYaw + rotStep;
+                player.quaternion.setFromEuler(new THREE.Euler(0, newYaw, 0));
                 socketRef.current?.emit('playerMovement', { x: player.position.x, y: player.position.y, z: player.position.z });
 
                 if (currentAction !== walkAction) {
@@ -4102,8 +4279,32 @@ function Game({ avatarUrl, gender }) {
                         idleAction.reset().fadeIn(0.2).play();
                         currentAction = idleAction;
                     }
+                    // Жёсткое выравнивание по топ-поверхности при переходе в idle
+                    (function alignGroundFinal(p) {
+                        const downRay = new THREE.Raycaster(
+                            new THREE.Vector3(p.x, 100, p.z),
+                            new THREE.Vector3(0, -1, 0),
+                            0,
+                            300
+                        );
+                        downRay.camera = cameraRef.current;
+                        const walkables = [
+                            ...(cityGroupRef.current ? [cityGroupRef.current] : []),
+                            groundPlane,
+                            ...(cityMeshesRef.current || [])
+                        ].filter(Boolean);
+                        const raw = downRay.intersectObjects(walkables, true);
+                        const isDescendantOf = (obj, ancestor) => { let c=obj; while(c){ if(c===ancestor) return true; c=c.parent;} return false; };
+                        const hits = raw
+                            .filter(h => !h.object.isSprite && h.face && h.face.normal && h.face.normal.y > 0.6)
+                            .filter(h => !isDescendantOf(h.object, player));
+                        if (hits.length) p.y = hits[0].point.y + 0.02;
+                    })(player.position);
                 }
             }
+
+            // Всегда подравниваем Y к верхней поверхности, чтобы исключить проваливания на остановке
+            stickToTopSurface(player.position);
         }
 
 
@@ -4330,8 +4531,10 @@ function Game({ avatarUrl, gender }) {
             const polar = basePolar + cameraPitchOffset;
             const planar = radius * Math.cos(polar);
             const yOff = radius * Math.sin(polar);
-            const xOff = planar * Math.cos(baseAzimuth);
-            const zOff = planar * Math.sin(baseAzimuth);
+            // Горизонтальный угол = исходный азимут + относительный поворот (±90°)
+            const azimuth = baseAzimuth0 + horizontalYaw;
+            const xOff = planar * Math.cos(azimuth);
+            const zOff = planar * Math.sin(azimuth);
 
             // Плавная интерполяция позиции камеры
             const targetPosition = new THREE.Vector3(
@@ -4351,6 +4554,16 @@ function Game({ avatarUrl, gender }) {
             if (!renderer || !scene || !cameraRef.current) {
                 console.warn('Пропускаем анимацию - не все объекты инициализированы');
                 return;
+            }
+
+            // Блокировка управления при потере соединения
+            if (connectionLostRef.current) {
+                // Останавливаем любые движения
+                if (moveInputRef.current) {
+                    Object.keys(moveInputRef.current).forEach(k => moveInputRef.current[k] = false);
+                }
+                // Скрыть маркер назначения
+                if (destinationMarker) destinationMarker.visible = false;
             }
 
             if (!clock || typeof clock.getDelta !== 'function') {
@@ -4606,6 +4819,14 @@ function Game({ avatarUrl, gender }) {
             <div style={{ position: 'absolute', top: 20, right: 150, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
                 X: {playerCoords.x} Y: {playerCoords.y} Z: {playerCoords.z}
             </div>
+            {/* Индикатор связи в правом нижнем углу */}
+            <div style={{ position: 'absolute', right: 20, bottom: 20, zIndex: 10000, display: 'flex', alignItems: 'center', gap: 8,
+                background: 'rgba(15,15,20,0.75)', color: '#fff', padding: '8px 10px', borderRadius: 10, backdropFilter: 'blur(4px)'}}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: connectionLost ? '#ef4444' : (latencyMs == null ? '#f59e0b' : (latencyMs < 80 ? '#22c55e' : latencyMs < 160 ? '#eab308' : '#ef4444')) }} />
+                <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    {connectionLost ? 'Связь: нет' : `Пинг: ${latencyMs ?? '—'} ms`}
+                </div>
+            </div>
             <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
                 {(() => {
                     if (!gameTime) return 'Загрузка времени...';
@@ -4614,6 +4835,19 @@ function Game({ avatarUrl, gender }) {
                     return d.toLocaleString();
                 })()}
             </div>
+
+            {/* Оверлей при потере соединения */}
+            {connectionLost && (
+                <div style={{ position: 'absolute', inset: 0, zIndex: 20000, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ background: 'rgba(20,20,25,0.95)', padding: '24px 28px', borderRadius: 12, color: '#fff', width: 420, textAlign: 'center', boxShadow: '0 12px 40px rgba(0,0,0,0.45)' }}>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>Соединение потеряно</div>
+                        <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 16 }}>Связь с сервером была прервана. Пожалуйста, перезайдите в игру.</div>
+                        <button onClick={() => window.location.reload()} style={{
+                            background: '#ef4444', border: 'none', color: '#fff', padding: '10px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 700
+                        }}>Перезайти</button>
+                    </div>
+                </div>
+            )}
             {/* Кнопка карты мира */}
             <button
                 style={{

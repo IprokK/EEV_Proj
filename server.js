@@ -1554,6 +1554,46 @@ app.post('/api/interiors/:id/save', authenticate, async (req, res) => {
   }
 });
 
+// Коллизии карты: загрузка/сохранение файла public/colliders.json
+app.get('/api/colliders', authenticate, async (req, res) => {
+  const cityId = Number(req.query.cityId) || 0;
+  try {
+    const fileName = cityId ? `colliders_city_${cityId}.json` : 'colliders.json';
+    const filePath = pathLib.join(__dirname, 'public', fileName);
+    try {
+      const raw = await fs.promises.readFile(filePath, 'utf8');
+      const json = JSON.parse(raw);
+      return res.json(json);
+    } catch (e) {
+      // Если нет файла — создаём пустой
+      const empty = { colliders: [] };
+      await fs.promises.mkdir(pathLib.join(__dirname, 'public'), { recursive: true });
+      await fs.promises.writeFile(filePath, JSON.stringify(empty, null, 2), 'utf8');
+      return res.json(empty);
+    }
+  } catch (e) {
+    console.error('Ошибка чтения colliders.json:', e);
+    res.status(500).json({ error: 'Ошибка чтения коллизий' });
+  }
+});
+
+app.post('/api/colliders', authenticate, async (req, res) => {
+  try {
+    const { colliders, cityId } = req.body || {};
+    if (!Array.isArray(colliders)) {
+      return res.status(400).json({ error: 'Invalid colliders' });
+    }
+    const fileName = cityId ? `colliders_city_${Number(cityId)}.json` : 'colliders.json';
+    const filePath = pathLib.join(__dirname, 'public', fileName);
+    await fs.promises.mkdir(pathLib.join(__dirname, 'public'), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify({ colliders }, null, 2), 'utf8');
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Ошибка записи colliders.json:', e);
+    res.status(500).json({ error: 'Ошибка сохранения коллизий' });
+  }
+});
+
 
 
 // Получить организацию по objectId

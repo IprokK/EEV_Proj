@@ -10,6 +10,7 @@ import GameWrapper      from './components/GameWrapper';
 import RequireProfile   from './components/RequireProfile';
 import MapEditor        from './pages/MapEditor';
 import InteriorEditor   from './pages/InteriorEditor';
+import CollisionEditor  from './pages/CollisionEditor';
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(!!localStorage.getItem('token'));
@@ -72,6 +73,18 @@ export default function App() {
           isAuth
             ? <RequireProfile>
                 <InteriorEditor />
+              </RequireProfile>
+            : <Navigate to="/login" replace/>
+        }
+      />
+
+      {/* редактор коллизий */}
+      <Route
+        path="/collision-editor"
+        element={
+          isAuth
+            ? <RequireProfile>
+                <CollisionEditor />
               </RequireProfile>
             : <Navigate to="/login" replace/>
         }
