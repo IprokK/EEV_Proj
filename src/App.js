@@ -11,6 +11,7 @@ import RequireProfile   from './components/RequireProfile';
 import MapEditor        from './pages/MapEditor';
 import InteriorEditor   from './pages/InteriorEditor';
 import CollisionEditor  from './pages/CollisionEditor';
+import EnhancedCollisionEditor from './pages/EnhancedCollisionEditor';
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(!!localStorage.getItem('token'));
@@ -85,6 +86,16 @@ export default function App() {
           isAuth
             ? <RequireProfile>
                 <CollisionEditor />
+              </RequireProfile>
+            : <Navigate to="/login" replace/>
+        }
+      />
+      <Route
+        path="/enhanced-collision-editor"
+        element={
+          isAuth
+            ? <RequireProfile>
+                <EnhancedCollisionEditor />
               </RequireProfile>
             : <Navigate to="/login" replace/>
         }

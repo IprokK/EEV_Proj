@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест системы коллизий интерьеров</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #debugInfo {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer"></div>
+    
+    <div id="debugInfo">
+        <div>Статус: <span id="status">Загрузка...</span></div>
+        <div>Коллайдеры: <span id="colliders">0</span></div>
+        <div>Позиция игрока: <span id="position">0, 0, 0</span></div>
+        <div>В интерьере: <span id="inInterior">false</span></div>
+    </div>
+    
+    <div id="instructions">
+        <h3>Управление:</h3>
+        <p><strong>WASD</strong> - движение</p>
+        <p><strong>Мышь</strong> - поворот камеры (в интерьере)</p>
+        <p><strong>Клик по объекту</strong> - вход в интерьер</p>
+        <p><strong>Escape</strong> - выход из интерьера</p>
+        <br>
+        <p><strong>Тест коллизий:</strong></p>
+        <p>В интерьере игрок не должен проходить сквозь стены и объекты</p>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.158.0/build/three.module.js';
+        
+        // Простая система коллизий для тестирования
+        class SimpleCollisionTest {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.player = null;
+                this.isInInterior = false;
+                this.interiorColliders = [];
+                this.moveInput = { forward: false, backward: false, left: false, right: false };
+                
+                this.init();
+            }
+            
+            init() {
+                // Настройка рендерера
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x87CEEB);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                
+                document.getElementById('gameContainer').appendChild(this.renderer.domElement);
+                
+                // Создаем простую сцену
+                this.createScene();
+                
+                // Создаем игрока
+                this.createPlayer();
+                
+                // Настраиваем обработчики событий
+                this.setupEventListeners();
+                
+                // Запускаем игровой цикл
+                this.animate();
+                
+                this.updateDebugInfo();
+            }
+            
+            createScene() {
+                // Освещение
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(10, 10, 5);
+                directionalLight.castShadow = true;
+                this.scene.add(directionalLight);
+                
+                // Создаем простой интерьер для тестирования
+                this.createTestInterior();
+            }
+            
+            createTestInterior() {
+                const interiorGroup = new THREE.Group();
+                
+                // Стены
+                const wallGeometry = new THREE.BoxGeometry(0.2, 3, 10);
+                const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+                
+                // Левая стена
+                const leftWall = new THREE.Mesh(wallGeometry, wallMaterial);
+                leftWall.position.set(-5, 1.5, 0);
+                leftWall.castShadow = true;
+                interiorGroup.add(leftWall);
+                
+                // Правая стена
+                const rightWall = new THREE.Mesh(wallGeometry, wallMaterial);
+                rightWall.position.set(5, 1.5, 0);
+                rightWall.castShadow = true;
+                interiorGroup.add(rightWall);
+                
+                // Задняя стена
+                const backWallGeometry = new THREE.BoxGeometry(10, 3, 0.2);
+                const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+                backWall.position.set(0, 1.5, -5);
+                backWall.castShadow = true;
+                interiorGroup.add(backWall);
+                
+                // Передняя стена (с проходом)
+                const frontWall1 = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.2), wallMaterial);
+                frontWall1.position.set(-3, 1.5, 5);
+                frontWall1.castShadow = true;
+                interiorGroup.add(frontWall1);
+                
+                const frontWall2 = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.2), wallMaterial);
+                frontWall2.position.set(3, 1.5, 5);
+                frontWall2.castShadow = true;
+                interiorGroup.add(frontWall2);
+                
+                // Пол
+                const floorGeometry = new THREE.BoxGeometry(10, 0.1, 10);
+                const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x654321 });
+                const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+                floor.position.set(0, 0, 0);
+                floor.receiveShadow = true;
+                interiorGroup.add(floor);
+                
+                // Потолок
+                const ceiling = new THREE.Mesh(floorGeometry, new THREE.MeshLambertMaterial({ color: 0xFFFFFF }));
+                ceiling.position.set(0, 3, 0);
+                interiorGroup.add(ceiling);
+                
+                // Объекты в интерьере
+                const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+                const boxMaterial = new THREE.MeshLambertMaterial({ color: 0xFF0000 });
+                
+                const box1 = new THREE.Mesh(boxGeometry, boxMaterial);
+                box1.position.set(-2, 0.5, -2);
+                box1.castShadow = true;
+                interiorGroup.add(box1);
+                
+                const box2 = new THREE.Mesh(boxGeometry, boxMaterial);
+                box2.position.set(2, 0.5, 2);
+                box2.castShadow = true;
+                interiorGroup.add(box2);
+                
+                // Собираем коллайдеры
+                this.interiorColliders = [];
+                interiorGroup.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        this.interiorColliders.push(child);
+                    }
+                });
+                
+                this.scene.add(interiorGroup);
+                this.interiorGroup = interiorGroup;
+                
+                console.log('Создано коллайдеров:', this.interiorColliders.length);
+            }
+            
+            createPlayer() {
+                const playerGeometry = new THREE.BoxGeometry(0.6, 1.6, 0.6);
+                const playerMaterial = new THREE.MeshLambertMaterial({ color: 0x0000FF });
+                this.player = new THREE.Mesh(playerGeometry, playerMaterial);
+                this.player.position.set(0, 0.8, 0);
+                this.scene.add(this.player);
+                
+                // Устанавливаем камеру на уровне глаз игрока
+                this.camera.position.set(0, 1.6, 0);
+                this.camera.lookAt(0, 1.6, -1);
+            }
+            
+            setupEventListeners() {
+                // Клавиатура
+                document.addEventListener('keydown', (event) => {
+                    switch(event.code) {
+                        case 'KeyW':
+                            this.moveInput.forward = true;
+                            break;
+                        case 'KeyS':
+                            this.moveInput.backward = true;
+                            break;
+                        case 'KeyA':
+                            this.moveInput.left = true;
+                            break;
+                        case 'KeyD':
+                            this.moveInput.right = true;
+                            break;
+                        case 'Escape':
+                            this.exitInterior();
+                            break;
+                    }
+                });
+                
+                document.addEventListener('keyup', (event) => {
+                    switch(event.code) {
+                        case 'KeyW':
+                            this.moveInput.forward = false;
+                            break;
+                        case 'KeyS':
+                            this.moveInput.backward = false;
+                            break;
+                        case 'KeyA':
+                            this.moveInput.left = false;
+                            break;
+                        case 'KeyD':
+                            this.moveInput.right = false;
+                            break;
+                    }
+                });
+                
+                // Мышь для поворота камеры в интерьере
+                document.addEventListener('mousemove', (event) => {
+                    if (this.isInInterior) {
+                        this.camera.rotation.y -= event.movementX * 0.002;
+                        this.camera.rotation.x -= event.movementY * 0.002;
+                        this.camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.camera.rotation.x));
+                    }
+                });
+                
+                // Клик для входа в интерьер
+                this.renderer.domElement.addEventListener('click', () => {
+                    if (!this.isInInterior) {
+                        this.enterInterior();
+                    }
+                });
+                
+                // Изменение размера окна
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+            }
+            
+            enterInterior() {
+                console.log('Вход в интерьер');
+                this.isInInterior = true;
+                this.player.visible = false;
+                
+                // Запрашиваем pointer lock
+                this.renderer.domElement.requestPointerLock();
+                
+                this.updateDebugInfo();
+            }
+            
+            exitInterior() {
+                console.log('Выход из интерьера');
+                this.isInInterior = false;
+                this.player.visible = true;
+                
+                // Выходим из pointer lock
+                document.exitPointerLock();
+                
+                this.updateDebugInfo();
+            }
+            
+            checkCollision(testPosition) {
+                const playerRadius = 0.3;
+                const playerHeight = 1.6;
+                
+                // Создаем AABB для игрока
+                const playerBox = new THREE.Box3();
+                const playerMin = new THREE.Vector3(
+                    testPosition.x - playerRadius,
+                    testPosition.y,
+                    testPosition.z - playerRadius
+                );
+                const playerMax = new THREE.Vector3(
+                    testPosition.x + playerRadius,
+                    testPosition.y + playerHeight,
+                    testPosition.z + playerRadius
+                );
+                playerBox.setFromPoints([playerMin, playerMax]);
+                
+                // Проверяем столкновения с коллайдерами
+                for (const collider of this.interiorColliders) {
+                    if (!collider.geometry || !collider.visible) continue;
+                    
+                    collider.updateMatrixWorld(true);
+                    const colliderBox = new THREE.Box3();
+                    colliderBox.setFromObject(collider);
+                    
+                    if (playerBox.intersectsBox(colliderBox)) {
+                        return true;
+                    }
+                }
+                
+                return false;
+            }
+            
+            updatePlayer(deltaTime) {
+                if (!this.isInInterior) return;
+                
+                const speed = 3.0;
+                const moveDistance = speed * deltaTime;
+                
+                // Используем простые направления вместо кватернионов
+                const forward = new THREE.Vector3(0, 0, -1);
+                const right = new THREE.Vector3(1, 0, 0);
+                
+                // Поворачиваем направления в соответствии с поворотом камеры
+                forward.applyEuler(new THREE.Euler(0, this.camera.rotation.y, 0));
+                right.applyEuler(new THREE.Euler(0, this.camera.rotation.y, 0));
+                
+                let moveVector = new THREE.Vector3();
+                
+                if (this.moveInput.forward) moveVector.add(forward);
+                if (this.moveInput.backward) moveVector.add(forward.clone().multiplyScalar(-1));
+                if (this.moveInput.left) moveVector.add(right.clone().multiplyScalar(-1));
+                if (this.moveInput.right) moveVector.add(right);
+                
+                if (moveVector.length() > 0) {
+                    moveVector.normalize().multiplyScalar(moveDistance);
+                    
+                    // Проверяем коллизии по осям отдельно
+                    let safePosition = this.camera.position.clone();
+                    
+                    // Проверяем движение по X
+                    if (Math.abs(moveVector.x) > 0.001) {
+                        const xTestPosition = safePosition.clone();
+                        xTestPosition.x += moveVector.x;
+                        if (!this.checkCollision(xTestPosition)) {
+                            safePosition.x = xTestPosition.x;
+                        }
+                    }
+                    
+                    // Проверяем движение по Z
+                    if (Math.abs(moveVector.z) > 0.001) {
+                        const zTestPosition = safePosition.clone();
+                        zTestPosition.z += moveVector.z;
+                        if (!this.checkCollision(zTestPosition)) {
+                            safePosition.z = zTestPosition.z;
+                        }
+                    }
+                    
+                    this.camera.position.copy(safePosition);
+                }
+            }
+            
+            updateDebugInfo() {
+                document.getElementById('status').textContent = this.isInInterior ? 'В интерьере' : 'Вне интерьера';
+                document.getElementById('colliders').textContent = this.interiorColliders.length;
+                document.getElementById('position').textContent = 
+                    `${this.camera.position.x.toFixed(2)}, ${this.camera.position.y.toFixed(2)}, ${this.camera.position.z.toFixed(2)}`;
+                document.getElementById('inInterior').textContent = this.isInInterior;
+            }
+            
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                const deltaTime = 0.016; // Примерно 60 FPS
+                
+                this.updatePlayer(deltaTime);
+                this.updateDebugInfo();
+                
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+        
+        // Запускаем тест
+        const test = new SimpleCollisionTest();
+    </script>
+</body>
+</html>

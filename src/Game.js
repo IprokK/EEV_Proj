@@ -28,8 +28,13 @@ function Game({ avatarUrl, gender }) {
     // 3) реф для группы «интерьера»
     const interiorGroupRef = useRef(null);
     const interiorCollidersRef = useRef([]);
+    const interiorColliderBoxesRef = useRef([]);
+    const jsonCollidersRef = useRef([]);
+    const visualCollidersRef = useRef([]);
     const interiorExitPosRef = useRef(null);
     const fpHiddenNodesRef = useRef([]);
+    const interiorDebugEnabledRef = useRef(false);
+    const interiorDebugHelpersRef = useRef([]);
     const cleanupTimerRef = useRef(null);
     // Глобальный менеджер прогресса загрузки (используем в GLTFLoader)
     const loadingManagerRef = useRef(null);
@@ -49,6 +54,15 @@ function Game({ avatarUrl, gender }) {
     const isInInteriorRef = useRef(false);
     const altHeldRef = useRef(false);
     const LOAD_RADIUS = 120;
+    
+    // Конфигурация коллайдеров
+    const COLLIDER_CONFIG = {
+        sizeMultiplier: 2.0, // Коэффициент увеличения размеров для полного покрытия объекта
+        debugMode: false, // Режим отладки для визуализации коллайдеров
+        minSize: 0.5, // Минимальный размер коллайдера
+        maxSize: 50.0, // Максимальный размер коллайдера
+        adaptiveScaling: true // Адаптивное масштабирование на основе размеров объекта
+    };
 
     const [activeApp, setActiveApp] = useState(null);
 
@@ -536,8 +550,437 @@ function Game({ avatarUrl, gender }) {
         }
 
         // Загружаем модель интерьера
-        console.log('Загружаем модель интерьера');
+        console.log('Загружаем модель интерьера для ID:', interiorId);
+        try {
         await loadInteriorModel(interiorId);
+            console.log('loadInteriorModel завершена успешно');
+        } catch (error) {
+            console.error('Ошибка в loadInteriorModel:', error);
+        }
+
+        // Загружаем коллизионные данные из JSON
+        console.log('Загружаем коллизионные данные из JSON...');
+        try {
+            const jsonColliders = await loadCollidersFromJSON(1); // Пока используем город 1
+            console.log('🔍 Результат loadCollidersFromJSON:', jsonColliders);
+            jsonCollidersRef.current = jsonColliders;
+            console.log('🔍 jsonCollidersRef.current установлен:', jsonCollidersRef.current?.length || 0, 'объектов');
+            console.log('Коллизионные данные загружены:', jsonColliders.length, 'объектов');
+            
+            // Автоматически применяем цвета и прозрачность из JSON к объектам
+            console.log('🎨 Автоматически применяем цвета из JSON к объектам...');
+            setTimeout(() => {
+                if (window.applyJsonColorsToObjects) {
+                    window.applyJsonColorsToObjects();
+                }
+            }, 100); // Небольшая задержка для завершения загрузки объектов
+            
+            // Добавляем визуальные коллайдеры в сцену
+            const visualColliders = jsonColliders.map(collider => collider.visual);
+            visualCollidersRef.current = visualColliders;
+            
+            visualColliders.forEach(collider => {
+                if (sceneRef.current) {
+                    sceneRef.current.add(collider);
+                    console.log('Добавлен визуальный коллайдер в сцену');
+                }
+            });
+            
+            // Добавляем функции для настройки коллайдеров в глобальную область
+            window.colliderConfig = COLLIDER_CONFIG;
+            window.updateColliderSize = (multiplier) => {
+                COLLIDER_CONFIG.sizeMultiplier = multiplier;
+                console.log('🔧 Обновлен коэффициент размера коллайдеров:', multiplier);
+                reloadColliders();
+            };
+            
+            window.toggleAdaptiveScaling = () => {
+                COLLIDER_CONFIG.adaptiveScaling = !COLLIDER_CONFIG.adaptiveScaling;
+                console.log('🔧 Адаптивное масштабирование:', COLLIDER_CONFIG.adaptiveScaling ? 'включено' : 'выключено');
+                reloadColliders();
+            };
+            
+            window.setColliderLimits = (minSize, maxSize) => {
+                COLLIDER_CONFIG.minSize = minSize;
+                COLLIDER_CONFIG.maxSize = maxSize;
+                console.log('🔧 Установлены ограничения размеров:', { minSize, maxSize });
+                reloadColliders();
+            };
+            
+            window.toggleColliderDebug = () => {
+                COLLIDER_CONFIG.debugMode = !COLLIDER_CONFIG.debugMode;
+                console.log('🔧 Режим отладки коллайдеров:', COLLIDER_CONFIG.debugMode ? 'включен' : 'выключен');
+                // Обновляем видимость визуальных коллайдеров
+                visualCollidersRef.current.forEach(collider => {
+                    collider.visible = COLLIDER_CONFIG.debugMode;
+                });
+            };
+            
+            window.setColliderColor = (r, g, b) => {
+                console.log('🎨 Устанавливаем цвет коллайдеров:', { r, g, b });
+                visualCollidersRef.current.forEach(collider => {
+                    if (collider.material) {
+                        const color = (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255);
+                        collider.material.color.setHex(color);
+                    }
+                });
+            };
+            
+            window.setColliderOpacity = (opacity) => {
+                const clampedOpacity = Math.max(0, Math.min(1, opacity));
+                console.log('👁️ Устанавливаем прозрачность коллайдеров:', clampedOpacity);
+                visualCollidersRef.current.forEach(collider => {
+                    if (collider.material) {
+                        collider.material.opacity = clampedOpacity;
+                    }
+                });
+            };
+            
+            window.randomizeColliderColors = () => {
+                console.log('🌈 Случайные цвета для коллайдеров');
+                visualCollidersRef.current.forEach(collider => {
+                    if (collider.material) {
+                        const r = Math.random();
+                        const g = Math.random();
+                        const b = Math.random();
+                        const color = (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255);
+                        collider.material.color.setHex(color);
+                    }
+                });
+            };
+            
+            window.setInteriorObjectColor = (r, g, b) => {
+                console.log('🎨 Устанавливаем цвет объектов интерьера:', { r, g, b });
+                const color = (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255);
+                
+                console.log('🔍 Проверяем interiorGroupRef.current:', interiorGroupRef.current);
+                console.log('🔍 Проверяем sceneRef.current:', sceneRef.current);
+                
+                // Ищем группу интерьера в сцене
+                let interiorGroup = interiorGroupRef.current;
+                if (!interiorGroup && sceneRef.current) {
+                    interiorGroup = sceneRef.current.getObjectByName('interiorGroup');
+                    console.log('🔍 Найдена группа интерьера по имени:', interiorGroup);
+                }
+                
+                if (!interiorGroup) {
+                    console.warn('⚠️ Группа интерьера не найдена!');
+                    return;
+                }
+                
+                let meshCount = 0;
+                let materialCount = 0;
+                
+                // Применяем цвет ко всем объектам интерьера
+                interiorGroup.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        meshCount++;
+                        console.log('🔍 Обрабатываем меш:', child.name || 'unnamed', 'материал:', child.material);
+                        
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(mat => {
+                                if (mat) {
+                                    materialCount++;
+                                    console.log('🔍 Изменяем материал массива:', mat);
+                                    mat.color.setHex(color);
+                                    mat.needsUpdate = true;
+                                }
+                            });
+                        } else {
+                            materialCount++;
+                            console.log('🔍 Изменяем материал:', child.material);
+                            child.material.color.setHex(color);
+                            child.material.needsUpdate = true;
+                        }
+                    }
+                });
+                
+                console.log(`✅ Обработано мешей: ${meshCount}, материалов: ${materialCount}`);
+            };
+            
+            window.debugInteriorObjects = () => {
+                console.log('🔍 Диагностика объектов интерьера:');
+                console.log('interiorGroupRef.current:', interiorGroupRef.current);
+                console.log('sceneRef.current:', sceneRef.current);
+                
+                if (sceneRef.current) {
+                    console.log('Все объекты в сцене:');
+                    sceneRef.current.traverse((child) => {
+                        if (child.isMesh) {
+                            console.log('Меш:', child.name || 'unnamed', 'позиция:', child.position, 'материал:', child.material);
+                        } else if (child.isGroup) {
+                            console.log('Группа:', child.name || 'unnamed', 'дети:', child.children.length);
+                        }
+                    });
+                }
+                
+                // Ищем группу интерьера
+                if (sceneRef.current) {
+                    const interiorGroup = sceneRef.current.getObjectByName('interiorGroup');
+                    console.log('Группа интерьера найдена:', interiorGroup);
+                    
+                    if (interiorGroup) {
+                        console.log('Объекты в группе интерьера:');
+                        interiorGroup.traverse((child) => {
+                            if (child.isMesh) {
+                                console.log('Меш в интерьере:', child.name || 'unnamed', 'материал:', child.material);
+                            }
+                        });
+                    }
+                }
+            };
+            
+            window.setColliderObjectsColor = (r, g, b) => {
+                console.log('🎨 Устанавливаем цвет только объектов из JSON коллайдеров:', { r, g, b });
+                const color = (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255);
+                
+                if (!jsonCollidersRef.current || jsonCollidersRef.current.length === 0) {
+                    console.warn('⚠️ JSON коллайдеры не найдены!');
+                    return;
+                }
+                
+                if (!sceneRef.current) {
+                    console.warn('⚠️ Сцена не найдена!');
+                    return;
+                }
+                
+                let processedCount = 0;
+                
+                // Проходим по всем коллайдерам из JSON
+                jsonCollidersRef.current.forEach((colliderData, index) => {
+                    const colliderPos = colliderData.data.position;
+                    console.log(`🔍 Ищем объект для коллайдера ${index} в позиции:`, colliderPos);
+                    
+                    // Ищем объекты в сцене, которые находятся рядом с позицией коллайдера
+                    sceneRef.current.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            const distance = Math.sqrt(
+                                Math.pow(child.position.x - colliderPos.x, 2) + 
+                                Math.pow(child.position.y - colliderPos.y, 2) + 
+                                Math.pow(child.position.z - colliderPos.z, 2)
+                            );
+                            
+                            // Если объект находится в радиусе 2 единиц от коллайдера
+                            if (distance < 2.0) {
+                                console.log(`🎯 Найден объект для коллайдера ${index}:`, child.name || 'unnamed', 'расстояние:', distance);
+                                
+                                if (Array.isArray(child.material)) {
+                                    child.material.forEach(mat => {
+                                        if (mat) {
+                                            mat.color.setHex(color);
+                                            mat.needsUpdate = true;
+                                        }
+                                    });
+                                } else {
+                                    child.material.color.setHex(color);
+                                    child.material.needsUpdate = true;
+                                }
+                                
+                                processedCount++;
+                            }
+                        }
+                    });
+                });
+                
+                console.log(`✅ Обработано объектов: ${processedCount}`);
+            };
+            
+            window.applyJsonColorsToObjects = () => {
+                console.log('🎨 Применяем цвета и прозрачность из JSON к объектам в сцене');
+                
+                if (!jsonCollidersRef.current || jsonCollidersRef.current.length === 0) {
+                    console.warn('⚠️ JSON коллайдеры не найдены!');
+                    return;
+                }
+                
+                if (!sceneRef.current) {
+                    console.warn('⚠️ Сцена не найдена!');
+                    return;
+                }
+                
+                let processedCount = 0;
+                
+                // Проходим по всем коллайдерам из JSON
+                jsonCollidersRef.current.forEach((colliderData, index) => {
+                    const colliderPos = colliderData.data.position;
+                    const colliderData_obj = colliderData.data;
+                    
+                    console.log(`🔍 Применяем настройки коллайдера ${index}:`, colliderData_obj);
+                    
+                    // Определяем цвет и прозрачность из JSON данных
+                    let color = 0xffffff; // Белый по умолчанию
+                    let opacity = 1.0; // Полная непрозрачность по умолчанию
+                    
+                    if (colliderData_obj.color) {
+                        const r = Math.floor((colliderData_obj.color.r || 1.0) * 255);
+                        const g = Math.floor((colliderData_obj.color.g || 1.0) * 255);
+                        const b = Math.floor((colliderData_obj.color.b || 1.0) * 255);
+                        color = (r << 16) | (g << 8) | b;
+                    }
+                    
+                    if (colliderData_obj.opacity !== undefined) {
+                        opacity = Math.max(0, Math.min(1, colliderData_obj.opacity));
+                    }
+                    
+                    console.log(`🎨 Применяем цвет ${color.toString(16)} и прозрачность ${opacity} для коллайдера ${index}`);
+                    
+                    // Ищем объекты в сцене, которые находятся рядом с позицией коллайдера
+                    sceneRef.current.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            const distance = Math.sqrt(
+                                Math.pow(child.position.x - colliderPos.x, 2) + 
+                                Math.pow(child.position.y - colliderPos.y, 2) + 
+                                Math.pow(child.position.z - colliderPos.z, 2)
+                            );
+                            
+                            // Если объект находится в радиусе 2 единиц от коллайдера
+                            if (distance < 2.0) {
+                                console.log(`🎯 Найден объект для коллайдера ${index}:`, child.name || 'unnamed', 'расстояние:', distance);
+                                
+                                if (Array.isArray(child.material)) {
+                                    child.material.forEach(mat => {
+                                        if (mat) {
+                                            mat.color.setHex(color);
+                                            mat.transparent = opacity < 1.0;
+                                            mat.opacity = opacity;
+                                            mat.needsUpdate = true;
+                                        }
+                                    });
+                                } else {
+                                    child.material.color.setHex(color);
+                                    child.material.transparent = opacity < 1.0;
+                                    child.material.opacity = opacity;
+                                    child.material.needsUpdate = true;
+                                }
+                                
+                                processedCount++;
+                            }
+                        }
+                    });
+                });
+                
+                console.log(`✅ Применены настройки к ${processedCount} объектам`);
+            };
+            
+            window.setAllObjectsColor = (r, g, b) => {
+                console.log('🎨 Устанавливаем цвет ВСЕХ объектов в сцене:', { r, g, b });
+                const color = (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255);
+                
+                if (!sceneRef.current) {
+                    console.warn('⚠️ Сцена не найдена!');
+                    return;
+                }
+                
+                let meshCount = 0;
+                let materialCount = 0;
+                
+                // Применяем цвет ко всем объектам в сцене
+                sceneRef.current.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        meshCount++;
+                        console.log('🔍 Обрабатываем меш:', child.name || 'unnamed');
+                        
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(mat => {
+                                if (mat) {
+                                    materialCount++;
+                                    mat.color.setHex(color);
+                                    mat.needsUpdate = true;
+                                }
+                            });
+                        } else {
+                            materialCount++;
+                            child.material.color.setHex(color);
+                            child.material.needsUpdate = true;
+                        }
+                    }
+                });
+                
+                console.log(`✅ Обработано мешей: ${meshCount}, материалов: ${materialCount}`);
+            };
+            
+            window.setInteriorObjectOpacity = (opacity) => {
+                const clampedOpacity = Math.max(0, Math.min(1, opacity));
+                console.log('👁️ Устанавливаем прозрачность объектов интерьера:', clampedOpacity);
+                
+                // Применяем прозрачность ко всем объектам интерьера
+                if (interiorGroupRef.current) {
+                    interiorGroupRef.current.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(mat => {
+                                    if (mat) {
+                                        mat.transparent = clampedOpacity < 1.0;
+                                        mat.opacity = clampedOpacity;
+                                        mat.needsUpdate = true;
+                                    }
+                                });
+                            } else {
+                                child.material.transparent = clampedOpacity < 1.0;
+                                child.material.opacity = clampedOpacity;
+                                child.material.needsUpdate = true;
+                            }
+                        }
+                    });
+                }
+            };
+            
+            const reloadColliders = () => {
+                loadCollidersFromJSON(1).then(newColliders => {
+                    // Удаляем старые визуальные коллайдеры
+                    visualCollidersRef.current.forEach(collider => {
+                        if (sceneRef.current) {
+                            sceneRef.current.remove(collider);
+                        }
+                    });
+                    
+                    // Обновляем данные
+                    jsonCollidersRef.current = newColliders;
+                    visualCollidersRef.current = newColliders.map(collider => collider.visual);
+                    
+                    // Добавляем новые визуальные коллайдеры
+                    visualCollidersRef.current.forEach(collider => {
+                        if (sceneRef.current) {
+                            sceneRef.current.add(collider);
+                            collider.visible = COLLIDER_CONFIG.debugMode;
+                        }
+                    });
+                    
+                    console.log('✅ Коллайдеры перезагружены с новыми настройками');
+                });
+            };
+            
+            window.testCollisions = () => {
+                console.log('🧪 Тестируем коллизии:');
+                console.log('JSON коллайдеров в ref:', jsonCollidersRef.current?.length || 0);
+                console.log('JSON коллайдеров в переменной:', jsonColliders.length);
+                console.log('Позиция игрока:', playerRef.current?.position);
+                console.log('jsonCollidersRef.current:', jsonCollidersRef.current);
+                
+                if (jsonCollidersRef.current && jsonCollidersRef.current.length > 0) {
+                    const testPos = playerRef.current?.position || new THREE.Vector3(-13.2, -100, -69.3);
+                    const playerBox = new THREE.Box3();
+                    const playerRadius = 0.4;
+                    const playerHeight = 1.6;
+                    
+                    playerBox.setFromPoints([
+                        new THREE.Vector3(testPos.x - playerRadius, testPos.y, testPos.z - playerRadius),
+                        new THREE.Vector3(testPos.x + playerRadius, testPos.y + playerHeight, testPos.z + playerRadius)
+                    ]);
+                    
+                    console.log('Player box:', playerBox.min, '->', playerBox.max);
+                    
+                    jsonCollidersRef.current.forEach((collider, i) => {
+                        console.log(`Коллайдер ${i}:`, collider.box.min, '->', collider.box.max);
+                        const intersects = playerBox.intersectsBox(collider.box);
+                        console.log(`Пересекается: ${intersects}`);
+                    });
+                }
+            };
+            
+        } catch (error) {
+            console.error('Ошибка загрузки коллизионных данных:', error);
+        }
 
         // Переключаемся на камеру от первого лица
         console.log('Переключаемся на камеру от первого лица');
@@ -550,6 +993,7 @@ function Game({ avatarUrl, gender }) {
         // Устанавливаем состояние "в интерьере"
         console.log('Устанавливаем setIsInInterior(true)');
         setIsInInterior(true);
+        isInInteriorRef.current = true; // Важно! Устанавливаем ref для системы коллизий
         setSelectedHouse(null);
 
         console.log('isInInterior установлен в true');
@@ -651,16 +1095,421 @@ function Game({ avatarUrl, gender }) {
         }
     };
 
+    // Функция для создания визуального коллайдера
+    const createVisualCollider = (colliderData, index) => {
+        const geometry = new THREE.BoxGeometry(
+            colliderData.scale.x,
+            colliderData.scale.y,
+            colliderData.scale.z
+        );
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xff0000, // Красный цвет
+            transparent: true,
+            opacity: 0.3, // Полупрозрачность
+            wireframe: false
+        });
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(
+            colliderData.position.x,
+            colliderData.position.y,
+            colliderData.position.z
+        );
+        mesh.rotation.set(
+            colliderData.rotation.x,
+            colliderData.rotation.y,
+            colliderData.rotation.z
+        );
+        
+        // Добавляем метку для отладки
+        mesh.userData = {
+            isCollider: true,
+            colliderIndex: index,
+            originalData: colliderData
+        };
+        
+        return mesh;
+    };
+
+    // Создаем визуальный коллайдер на основе реальных размеров мешей из модели
+    const createVisualColliderFromModel = (colliderData, index) => {
+        // Находим соответствующий меш в модели интерьера
+        let targetMesh = null;
+        if (interiorCollidersRef.current && interiorCollidersRef.current.length > 0) {
+            // Ищем меш, который ближе всего к позиции коллайдера
+            const targetPos = new THREE.Vector3(
+                colliderData.position.x,
+                colliderData.position.y,
+                colliderData.position.z
+            );
+            
+            let minDistance = Infinity;
+            for (const mesh of interiorCollidersRef.current) {
+                if (!mesh.geometry) continue;
+                
+                // Получаем реальные размеры меша
+                const box = new THREE.Box3().setFromObject(mesh);
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                
+                const distance = targetPos.distanceTo(center);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    targetMesh = mesh;
+                }
+            }
+        }
+        
+        let geometry, position, rotation, scale;
+        
+        if (targetMesh) {
+            // Используем реальные размеры меша
+            const box = new THREE.Box3().setFromObject(targetMesh);
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+            box.getSize(size);
+            box.getCenter(center);
+            
+            geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+            position = center;
+            rotation = targetMesh.rotation;
+            scale = targetMesh.scale;
+            
+            console.log('🎯 Используем реальные размеры меша:', {
+                size: size,
+                center: center,
+                rotation: rotation,
+                scale: scale
+            });
+        } else {
+            // Используем JSON данные с умным масштабированием
+            let adjustedSize = new THREE.Vector3(
+                colliderData.scale.x,
+                colliderData.scale.y,
+                colliderData.scale.z
+            );
+            
+            if (COLLIDER_CONFIG.adaptiveScaling) {
+                // Адаптивное масштабирование на основе размеров объекта
+                const avgSize = (adjustedSize.x + adjustedSize.y + adjustedSize.z) / 3;
+                
+                if (avgSize < 1.0) {
+                    // Для маленьких объектов используем больший коэффициент
+                    const adaptiveMultiplier = Math.max(COLLIDER_CONFIG.sizeMultiplier, 3.0);
+                    adjustedSize.multiplyScalar(adaptiveMultiplier);
+                } else if (avgSize < 5.0) {
+                    // Для средних объектов используем стандартный коэффициент
+                    adjustedSize.multiplyScalar(COLLIDER_CONFIG.sizeMultiplier);
+                } else {
+                    // Для больших объектов используем меньший коэффициент
+                    adjustedSize.multiplyScalar(Math.max(COLLIDER_CONFIG.sizeMultiplier * 0.8, 1.5));
+                }
+                
+                // Применяем минимальные и максимальные ограничения
+                adjustedSize.x = Math.max(Math.min(adjustedSize.x, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+                adjustedSize.y = Math.max(Math.min(adjustedSize.y, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+                adjustedSize.z = Math.max(Math.min(adjustedSize.z, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+            } else {
+                // Простое масштабирование
+                adjustedSize.multiplyScalar(COLLIDER_CONFIG.sizeMultiplier);
+            }
+            
+            geometry = new THREE.BoxGeometry(adjustedSize.x, adjustedSize.y, adjustedSize.z);
+            position = new THREE.Vector3(
+                colliderData.position.x,
+                colliderData.position.y,
+                colliderData.position.z
+            );
+            rotation = new THREE.Euler(
+                colliderData.rotation.x,
+                colliderData.rotation.y,
+                colliderData.rotation.z
+            );
+            scale = new THREE.Vector3(1, 1, 1);
+            
+            console.log('⚠️ Используем JSON данные с адаптивными размерами для коллайдера', index, {
+                originalSize: colliderData.scale,
+                adjustedSize: adjustedSize,
+                avgOriginalSize: (colliderData.scale.x + colliderData.scale.y + colliderData.scale.z) / 3
+            });
+        }
+        
+        // Определяем цвет и прозрачность из JSON данных или используем значения по умолчанию
+        let color = 0xff0000; // Красный по умолчанию
+        let opacity = 0.3; // Прозрачность по умолчанию
+        
+        if (colliderData.color) {
+            // Конвертируем RGB значения (0-1) в hex цвет
+            const r = Math.floor((colliderData.color.r || 1.0) * 255);
+            const g = Math.floor((colliderData.color.g || 0.0) * 255);
+            const b = Math.floor((colliderData.color.b || 0.0) * 255);
+            color = (r << 16) | (g << 8) | b;
+        }
+        
+        if (colliderData.opacity !== undefined) {
+            opacity = Math.max(0, Math.min(1, colliderData.opacity)); // Ограничиваем от 0 до 1
+        }
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: opacity,
+            wireframe: false
+        });
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(position);
+        mesh.rotation.copy(rotation);
+        mesh.scale.copy(scale);
+        
+        // Добавляем метку для отладки
+        mesh.userData = {
+            isCollider: true,
+            colliderIndex: index,
+            originalData: colliderData,
+            isFromModel: !!targetMesh
+        };
+        
+        return mesh;
+    };
+
+    // Функция для применения цвета и прозрачности к объектам интерьера
+    const applyColliderColorAndOpacity = (scene, objectData) => {
+        // Ищем соответствующий коллайдер в JSON данных
+        const matchingCollider = jsonCollidersRef.current?.find(collider => {
+            const pos = collider.data.position;
+            const objPos = { x: objectData.x || 0, y: objectData.y || 0, z: objectData.z || 0 };
+            
+            // Проверяем близость позиций (с небольшой погрешностью)
+            const distance = Math.sqrt(
+                Math.pow(pos.x - objPos.x, 2) + 
+                Math.pow(pos.y - objPos.y, 2) + 
+                Math.pow(pos.z - objPos.z, 2)
+            );
+            
+            return distance < 2.0; // Если объекты находятся в радиусе 2 единиц
+        });
+        
+        if (matchingCollider && matchingCollider.data) {
+            const colliderData = matchingCollider.data;
+            
+            // Определяем цвет и прозрачность
+            let color = 0xffffff; // Белый по умолчанию
+            let opacity = 1.0; // Полная непрозрачность по умолчанию
+            
+            if (colliderData.color) {
+                const r = Math.floor((colliderData.color.r || 1.0) * 255);
+                const g = Math.floor((colliderData.color.g || 1.0) * 255);
+                const b = Math.floor((colliderData.color.b || 1.0) * 255);
+                color = (r << 16) | (g << 8) | b;
+            }
+            
+            if (colliderData.opacity !== undefined) {
+                opacity = Math.max(0, Math.min(1, colliderData.opacity));
+            }
+            
+            // Применяем цвет и прозрачность ко всем мешам в сцене
+            scene.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material = child.material.map(mat => {
+                            if (!mat) return mat;
+                            const m = mat.clone();
+                            m.color.setHex(color);
+                            m.transparent = opacity < 1.0;
+                            m.opacity = opacity;
+                            m.needsUpdate = true;
+                            return m;
+                        });
+                    } else {
+                        child.material = child.material.clone();
+                        child.material.color.setHex(color);
+                        child.material.transparent = opacity < 1.0;
+                        child.material.opacity = opacity;
+                        child.material.needsUpdate = true;
+                    }
+                }
+            });
+            
+            console.log('🎨 Применен цвет и прозрачность к объекту:', {
+                position: { x: objectData.x, y: objectData.y, z: objectData.z },
+                color: color,
+                opacity: opacity,
+                colliderData: colliderData
+            });
+        }
+    };
+
+    // Функция для загрузки коллизионных данных из JSON
+    const loadCollidersFromJSON = async (cityId = 1) => {
+        console.log('🔍 loadCollidersFromJSON вызвана для города:', cityId);
+        try {
+            const url = `/colliders_city_${cityId}.json`;
+            console.log('🔍 Загружаем URL:', url);
+            const response = await fetch(url);
+            console.log('🔍 Ответ сервера:', response.status, response.ok);
+            
+            if (!response.ok) {
+                console.warn('Не удалось загрузить коллизионные данные для города:', cityId);
+                return [];
+            }
+            
+            const data = await response.json();
+            console.log('🔍 Загруженные данные:', data);
+            console.log('Загружены коллизионные данные:', data.colliders.length, 'объектов');
+            
+            // Преобразуем JSON данные в Box3 объекты
+            const colliderBoxes = data.colliders.map((colliderData, index) => {
+                const box = new THREE.Box3();
+                
+                // Создаем центр бокса
+                const center = new THREE.Vector3(
+                    colliderData.position.x,
+                    colliderData.position.y,
+                    colliderData.position.z
+                );
+                
+                // Увеличиваем размеры для полного покрытия объекта с адаптивным масштабированием
+                let size = new THREE.Vector3(
+                    colliderData.scale.x,
+                    colliderData.scale.y,
+                    colliderData.scale.z
+                );
+                
+                if (COLLIDER_CONFIG.adaptiveScaling) {
+                    // Адаптивное масштабирование на основе размеров объекта
+                    const avgSize = (size.x + size.y + size.z) / 3;
+                    
+                    if (avgSize < 1.0) {
+                        // Для маленьких объектов используем больший коэффициент
+                        const adaptiveMultiplier = Math.max(COLLIDER_CONFIG.sizeMultiplier, 3.0);
+                        size.multiplyScalar(adaptiveMultiplier);
+                    } else if (avgSize < 5.0) {
+                        // Для средних объектов используем стандартный коэффициент
+                        size.multiplyScalar(COLLIDER_CONFIG.sizeMultiplier);
+                    } else {
+                        // Для больших объектов используем меньший коэффициент
+                        size.multiplyScalar(Math.max(COLLIDER_CONFIG.sizeMultiplier * 0.8, 1.5));
+                    }
+                    
+                    // Применяем минимальные и максимальные ограничения
+                    size.x = Math.max(Math.min(size.x, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+                    size.y = Math.max(Math.min(size.y, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+                    size.z = Math.max(Math.min(size.z, COLLIDER_CONFIG.maxSize), COLLIDER_CONFIG.minSize);
+                } else {
+                    // Простое масштабирование
+                    size.multiplyScalar(COLLIDER_CONFIG.sizeMultiplier);
+                }
+                
+                // Устанавливаем min и max точки с увеличенными размерами
+                const min = center.clone().sub(size.clone().multiplyScalar(0.5));
+                const max = center.clone().add(size.clone().multiplyScalar(0.5));
+                
+                box.setFromPoints([min, max]);
+                
+                // Создаем визуальный коллайдер на основе реальных размеров мешей из модели
+                const visualCollider = createVisualColliderFromModel(colliderData, index);
+                
+                console.log('Создан коллайдер с увеличенными размерами:', {
+                    center: center,
+                    originalSize: colliderData.scale,
+                    adjustedSize: size,
+                    min: min,
+                    max: max,
+                    visual: visualCollider
+                });
+                
+                return {
+                    box: box,
+                    data: colliderData,
+                    visual: visualCollider
+                };
+            });
+            
+            console.log('🔍 Возвращаем colliderBoxes:', colliderBoxes.length, 'объектов');
+            console.log('🔍 Первый коллайдер:', colliderBoxes[0]);
+            
+            // Автоматически применяем цвета к объектам интерьера, если они уже загружены
+            setTimeout(() => {
+                if (interiorGroupRef.current) {
+                    console.log('🎨 JSON коллайдеры загружены, применяем цвета к объектам интерьера');
+                    colliderBoxes.forEach((colliderData, index) => {
+                        const colliderPos = colliderData.data.position;
+                        const colliderData_obj = colliderData.data;
+                        
+                        // Определяем цвет и прозрачность из JSON данных
+                        let color = 0xffffff; // Белый по умолчанию
+                        let opacity = 1.0; // Полная непрозрачность по умолчанию
+                        
+                        if (colliderData_obj.color) {
+                            const r = Math.floor((colliderData_obj.color.r || 1.0) * 255);
+                            const g = Math.floor((colliderData_obj.color.g || 1.0) * 255);
+                            const b = Math.floor((colliderData_obj.color.b || 1.0) * 255);
+                            color = (r << 16) | (g << 8) | b;
+                        }
+                        
+                        if (colliderData_obj.opacity !== undefined) {
+                            opacity = Math.max(0, Math.min(1, colliderData_obj.opacity));
+                        }
+                        
+                        console.log(`🎨 Применяем цвет ${color.toString(16)} и прозрачность ${opacity} к объектам интерьера`);
+                        
+                        // Применяем цвет к объектам интерьера
+                        interiorGroupRef.current.traverse((child) => {
+                            if (child.isMesh && child.material) {
+                                const distance = Math.sqrt(
+                                    Math.pow(child.position.x - colliderPos.x, 2) + 
+                                    Math.pow(child.position.y - colliderPos.y, 2) + 
+                                    Math.pow(child.position.z - colliderPos.z, 2)
+                                );
+                                
+                                if (distance < 2.0) {
+                                    console.log(`🎯 Применяем цвет к объекту интерьера:`, child.name || 'unnamed');
+                                    
+                                    if (Array.isArray(child.material)) {
+                                        child.material.forEach(mat => {
+                                            if (mat) {
+                                                mat.color.setHex(color);
+                                                mat.transparent = opacity < 1.0;
+                                                mat.opacity = opacity;
+                                                mat.needsUpdate = true;
+                                            }
+                                        });
+                                    } else {
+                                        child.material.color.setHex(color);
+                                        child.material.transparent = opacity < 1.0;
+                                        child.material.opacity = opacity;
+                                        child.material.needsUpdate = true;
+                                    }
+                                }
+                            }
+                        });
+                    });
+                }
+            }, 100);
+            
+            return colliderBoxes;
+        } catch (error) {
+            console.error('Ошибка загрузки коллизионных данных:', error);
+            return [];
+        }
+    };
+
     async function loadInteriorModel(interiorId) {
         console.log('loadInteriorModel вызвана для интерьера:', interiorId);
         const token = localStorage.getItem('token');
+        console.log('Токен найден:', !!token);
 
         try {
+            console.log('Запрашиваем определение интерьера с сервера...');
             const defRes = await fetch(`/api/interiors/${interiorId}/definition`, {
                 headers: { Authorization: `Bearer ${token}` },
                 credentials: 'include',
                 cache: 'no-cache'
             });
+
+            console.log('Ответ сервера:', defRes.status, defRes.ok);
 
             if (!defRes.ok) {
                 const errText = await defRes.text();
@@ -715,10 +1564,50 @@ function Game({ avatarUrl, gender }) {
             const colliders = [];
             gltf.scene.traverse((child) => {
                 if (child.isMesh && child.geometry) {
+                    // Пропускаем интерактивные объекты и сферы
+                    if (child.userData && (child.userData.interactable || child.userData.payload)) return;
+                    if (child.geometry.type === 'SphereGeometry') return;
                     colliders.push(child);
                 }
             });
             interiorCollidersRef.current = colliders;
+            console.log('Инициализировано коллайдеров интерьера:', colliders.length);
+            try {
+                const boxes = [];
+                for (const m of colliders) {
+                    if (!m) continue;
+                    const b = new THREE.Box3().setFromObject(m).expandByScalar(0.03);
+                    const h = b.max.y - b.min.y;
+                    if (h < 0.15) continue; // игнорируем пол/ковёр
+                    boxes.push(b);
+                }
+                interiorColliderBoxesRef.current = boxes;
+                console.log('[INTERIOR] colliders boxes:', boxes.length);
+
+                // Визуализация (вкл/выкл через interiorDebugEnabledRef)
+                if (interiorDebugEnabledRef.current && sceneRef.current) {
+                    // Очистим старые
+                    if (Array.isArray(interiorDebugHelpersRef.current)) {
+                        for (const h of interiorDebugHelpersRef.current) {
+                            try { sceneRef.current.remove(h); } catch (_) {}
+                        }
+                    }
+                    interiorDebugHelpersRef.current = [];
+                    const mat = new THREE.LineBasicMaterial({ color: 0xff00ff });
+                    for (const box of boxes) {
+                        const size = new THREE.Vector3();
+                        const center = new THREE.Vector3();
+                        box.getSize(size);
+                        box.getCenter(center);
+                        const geom = new THREE.BoxGeometry(size.x, size.y, size.z);
+                        const edges = new THREE.EdgesGeometry(geom);
+                        const helper = new THREE.LineSegments(edges, mat);
+                        helper.position.copy(center);
+                        sceneRef.current.add(helper);
+                        interiorDebugHelpersRef.current.push(helper);
+                    }
+                }
+            } catch (_) {}
 
             // Добавляем объекты интерьера
             interiorInteractablesRef.current = []; // сбрасываем реестр интерактива
@@ -743,6 +1632,10 @@ function Game({ avatarUrl, gender }) {
                         objGltf.scene.position.set(o.x, o.y, o.z);
                         objGltf.scene.rotation.set(o.rot_x, o.rot_y, o.rot_z);
                         objGltf.scene.scale.set(o.scale, o.scale, o.scale);
+                        
+                        // Применяем цвет и прозрачность из JSON данных коллайдеров
+                        applyColliderColorAndOpacity(objGltf.scene, o);
+                        
                         intGroup.add(objGltf.scene);
 
                         // Добавляем меши объекта как коллайдеры интерьера
@@ -842,6 +1735,69 @@ function Game({ avatarUrl, gender }) {
             interiorGroupRef.current = intGroup;
 
             console.log('Модель интерьера загружена успешно');
+            
+            // Автоматически применяем цвета из JSON к объектам интерьера
+            console.log('🎨 Применяем цвета из JSON к объектам интерьера...');
+            setTimeout(() => {
+                // Применяем цвета к объектам интерьера, если JSON коллайдеры уже загружены
+                if (jsonCollidersRef.current && jsonCollidersRef.current.length > 0) {
+                    console.log('🔍 JSON коллайдеры найдены, применяем цвета к объектам интерьера');
+                    jsonCollidersRef.current.forEach((colliderData, index) => {
+                        const colliderPos = colliderData.data.position;
+                        const colliderData_obj = colliderData.data;
+                        
+                        // Определяем цвет и прозрачность из JSON данных
+                        let color = 0xffffff; // Белый по умолчанию
+                        let opacity = 1.0; // Полная непрозрачность по умолчанию
+                        
+                        if (colliderData_obj.color) {
+                            const r = Math.floor((colliderData_obj.color.r || 1.0) * 255);
+                            const g = Math.floor((colliderData_obj.color.g || 1.0) * 255);
+                            const b = Math.floor((colliderData_obj.color.b || 1.0) * 255);
+                            color = (r << 16) | (g << 8) | b;
+                        }
+                        
+                        if (colliderData_obj.opacity !== undefined) {
+                            opacity = Math.max(0, Math.min(1, colliderData_obj.opacity));
+                        }
+                        
+                        console.log(`🎨 Применяем цвет ${color.toString(16)} и прозрачность ${opacity} к объектам интерьера`);
+                        
+                        // Применяем цвет к объектам интерьера
+                        intGroup.traverse((child) => {
+                            if (child.isMesh && child.material) {
+                                const distance = Math.sqrt(
+                                    Math.pow(child.position.x - colliderPos.x, 2) + 
+                                    Math.pow(child.position.y - colliderPos.y, 2) + 
+                                    Math.pow(child.position.z - colliderPos.z, 2)
+                                );
+                                
+                                if (distance < 2.0) {
+                                    console.log(`🎯 Применяем цвет к объекту интерьера:`, child.name || 'unnamed');
+                                    
+                                    if (Array.isArray(child.material)) {
+                                        child.material.forEach(mat => {
+                                            if (mat) {
+                                                mat.color.setHex(color);
+                                                mat.transparent = opacity < 1.0;
+                                                mat.opacity = opacity;
+                                                mat.needsUpdate = true;
+                                            }
+                                        });
+                                    } else {
+                                        child.material.color.setHex(color);
+                                        child.material.transparent = opacity < 1.0;
+                                        child.material.opacity = opacity;
+                                        child.material.needsUpdate = true;
+                                    }
+                                }
+                            }
+                        });
+                    });
+                } else {
+                    console.log('⚠️ JSON коллайдеры еще не загружены, цвета будут применены позже');
+                }
+            }, 200); // Задержка для завершения загрузки объектов
         } catch (e) {
             console.error('Ошибка загрузки модели интерьера:', e);
         }
@@ -1150,6 +2106,26 @@ function Game({ avatarUrl, gender }) {
             console.log('Группа интерьера удалена');
         }
 
+                    // Очищаем коллайдеры интерьера
+                    interiorCollidersRef.current = [];
+                    interiorColliderBoxesRef.current = [];
+                    jsonCollidersRef.current = [];
+                    
+                    // Удаляем визуальные коллайдеры из сцены
+                    visualCollidersRef.current.forEach(collider => {
+                        if (sceneRef.current) {
+                            sceneRef.current.remove(collider);
+                            console.log('Удален визуальный коллайдер из сцены');
+                        }
+                    });
+                    visualCollidersRef.current = [];
+                    
+                    console.log('Коллайдеры интерьера очищены');
+                    
+                    // Сбрасываем флаги отладки
+                    window.colliderDebugShown = false;
+                    window.collisionDebugShown = false;
+
         // Возвращаем третье лицо/камеру и актуализировать видимость объектов города
         switchToThirdPersonCamera?.();
         // Безопасный вызов без ReferenceError, даже если функция ещё не определена
@@ -1195,6 +2171,7 @@ function Game({ avatarUrl, gender }) {
         document.exitPointerLock();
 
         setIsInInterior(false);
+        isInInteriorRef.current = false; // Важно! Сбрасываем ref для системы коллизий
         setCurrentExit(null);
         interiorExitPosRef.current = null;
     };
@@ -1937,11 +2914,15 @@ function Game({ avatarUrl, gender }) {
     }
 
     function startMove(dir) {
+        console.log('startMove вызвана для направления:', dir);
         moveInputRef.current[dir] = true;
+        console.log('moveInputRef.current после startMove:', moveInputRef.current);
     }
 
     function stopMove(dir) {
+        console.log('stopMove вызвана для направления:', dir);
         moveInputRef.current[dir] = false;
+        console.log('moveInputRef.current после stopMove:', moveInputRef.current);
     }
 
 
@@ -4393,11 +5374,11 @@ function Game({ avatarUrl, gender }) {
         }
 
         function updateFirstPersonMovement(delta) {
-            if (!isInInteriorRef.current || cameraRef.current !== fpCamRef.current || !player) return;
+            if (!isInInteriorRef.current || !player) return;
 
             const move = moveInputRef.current;
-            const speed = 2; // Уменьшаем скорость для более плавного движения в интерьере
-            const rotSpeed = Math.PI * 0.5; // Уменьшаем скорость поворота
+            const speed = 3.0; // Скорость движения в интерьере
+            const rotSpeed = Math.PI * 0.5; // Скорость поворота
 
             // Проверка триггера выхода по внутренней точке
             if (interiorExitPosRef.current && player.position.distanceTo(interiorExitPosRef.current) < 0.7) {
@@ -4417,94 +5398,205 @@ function Game({ avatarUrl, gender }) {
             const lookForward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, player.rotation.y, 0));
             fpCamRef.current.lookAt(fpCamRef.current.position.clone().add(lookForward));
 
-            // Улучшенное движение с проверкой коллизий и предотвращением застревания
-            const tryMove = (dirVec) => {
-                const stepDistance = speed * delta;
-                const candidate = player.position.clone().addScaledVector(dirVec, stepDistance);
+            // Упрощенная система коллизий
+            const tryMove = (direction) => {
+                const moveDistance = speed * delta;
+                const playerRadius = 0.4; // Радиус игрока
+                const playerHeight = 1.6; // Высота игрока
+
+                // Получаем коллайдеры из JSON (приоритет)
+                let jsonColliders = jsonCollidersRef.current || [];
+                console.log('🔍 JSON коллайдеров:', jsonColliders.length);
                 
-                // Обновляем AABB игрока с меньшими размерами для предотвращения застревания
-                const half = 0.2; // Уменьшаем размер для лучшего прохождения
-                const height = 1.6; // Немного ниже для предотвращения застревания в потолке
-                const playerBox = new THREE.Box3(
-                    new THREE.Vector3(candidate.x - half, candidate.y, candidate.z - half),
-                    new THREE.Vector3(candidate.x + half, candidate.y + height, candidate.z + half)
-                );
-                
-                // Обновляем мировые матрицы статических коллайдеров для корректных AABB
-                try { 
-                    interiorGroupRef.current && interiorGroupRef.current.updateMatrixWorld(true); 
-                } catch (_) { }
+                // Если JSON коллайдеров нет, используем коллайдеры из модели
+                let colliders = interiorCollidersRef.current || [];
+                console.log('🔍 Модельных коллайдеров:', colliders.length);
 
-                // В интерьере учитываем только внутренние коллайдеры
-                const blockingMeshes = Array.isArray(interiorCollidersRef.current)
-                    ? interiorCollidersRef.current
-                    : [];
-
-                let hits = false;
-                let closestDistance = Infinity;
-                let slideDirection = null;
-
-                for (const mesh of blockingMeshes) {
-                    if (!mesh) continue;
-                    const box = new THREE.Box3().setFromObject(mesh);
-                    const expanded = box.clone().expandByScalar(0.05); // Увеличиваем зазор
-                    
-                    if (expanded.intersectsBox(playerBox)) {
-                        hits = true;
-                        
-                        // Вычисляем направление скольжения вдоль стены
-                        const center = box.getCenter(new THREE.Vector3());
-                        const toPlayer = player.position.clone().sub(center);
-                        const distance = toPlayer.length();
-                        
-                        if (distance < closestDistance) {
-                            closestDistance = distance;
-                            // Нормализуем и создаем направление скольжения
-                            toPlayer.normalize();
-                            slideDirection = toPlayer;
+                // Если коллайдеров нет, собираем их из группы интерьера
+                if (colliders.length === 0 && interiorGroupRef.current) {
+                    colliders = [];
+                    interiorGroupRef.current.traverse((child) => {
+                        if (child.isMesh && child.geometry && child.visible) {
+                            // Пропускаем интерактивные объекты и сферы
+                            if (child.userData && (child.userData.interactable || child.userData.payload)) return;
+                            if (child.geometry.type === 'SphereGeometry') return;
+                            colliders.push(child);
                         }
-                    }
+                    });
+                    interiorCollidersRef.current = colliders;
+                    console.log('Собрано коллайдеров интерьера:', colliders.length);
                 }
 
-                if (!hits) {
-                    // Свободное движение
-                    player.position.copy(candidate);
-                } else if (slideDirection) {
-                    // Скольжение вдоль стены
-                    const slideDistance = stepDistance * 0.7; // Уменьшаем дистанцию скольжения
-                    const slidePos = player.position.clone().addScaledVector(slideDirection, slideDistance);
-                    
-                    // Проверяем, можно ли двигаться в направлении скольжения
-                    const slideBox = new THREE.Box3(
-                        new THREE.Vector3(slidePos.x - half, slidePos.y, slidePos.z - half),
-                        new THREE.Vector3(slidePos.x + half, slidePos.y + height, slidePos.z + half)
+                // Проверяем коллизии
+                const checkCollision = (testPosition) => {
+                    // Создаем AABB для игрока
+                    const playerBox = new THREE.Box3();
+                    const playerMin = new THREE.Vector3(
+                        testPosition.x - playerRadius,
+                        testPosition.y,
+                        testPosition.z - playerRadius
                     );
-                    
-                    let canSlide = true;
-                    for (const mesh of blockingMeshes) {
-                        if (!mesh) continue;
-                        const box = new THREE.Box3().setFromObject(mesh);
-                        const expanded = box.clone().expandByScalar(0.05);
-                        if (expanded.intersectsBox(slideBox)) {
-                            canSlide = false;
-                            break;
+                    const playerMax = new THREE.Vector3(
+                        testPosition.x + playerRadius,
+                        testPosition.y + playerHeight,
+                        testPosition.z + playerRadius
+                    );
+                    playerBox.setFromPoints([playerMin, playerMax]);
+
+                    // Сначала проверяем JSON коллайдеры (приоритет)
+                    if (jsonColliders.length > 0) {
+                        console.log('🔍 Проверяем', jsonColliders.length, 'JSON коллайдеров');
+                        console.log('🔍 Player box:', playerBox.min, '->', playerBox.max);
+                        
+                        for (let i = 0; i < jsonColliders.length; i++) {
+                            const jsonCollider = jsonColliders[i];
+                            try {
+                                console.log(`🔍 Проверяем коллайдер ${i}:`, jsonCollider.box.min, '->', jsonCollider.box.max);
+                                
+                                // Проверяем пересечение с JSON коллайдером
+                                const intersects = playerBox.intersectsBox(jsonCollider.box);
+                                console.log(`🔍 Результат intersectsBox: ${intersects}`);
+                                
+                                if (intersects) {
+                                    console.log('🚫 КОЛЛИЗИЯ с JSON коллайдером', i, '!');
+                                    console.log('  Player box:', playerBox.min, '->', playerBox.max);
+                                    console.log('  JSON Collider box:', jsonCollider.box.min, '->', jsonCollider.box.max);
+                                    return true;
+                                }
+                                
+                                // Ручная проверка пересечения
+                                const manualX = playerBox.min.x <= jsonCollider.box.max.x && playerBox.max.x >= jsonCollider.box.min.x;
+                                const manualY = playerBox.min.y <= jsonCollider.box.max.y && playerBox.max.y >= jsonCollider.box.min.y;
+                                const manualZ = playerBox.min.z <= jsonCollider.box.max.z && playerBox.max.z >= jsonCollider.box.min.z;
+                                const manualIntersects = manualX && manualY && manualZ;
+                                
+                                console.log(`🔍 Ручная проверка - X: ${manualX}, Y: ${manualY}, Z: ${manualZ}, Результат: ${manualIntersects}`);
+                                
+                                if (manualIntersects) {
+                                    console.log('🚫 РУЧНАЯ КОЛЛИЗИЯ с JSON коллайдером', i, '!');
+                                    return true;
+                                }
+                            } catch (error) {
+                                console.warn('Ошибка при проверке JSON коллизии:', error);
+                                continue;
+                            }
                         }
                     }
+
+                    // Затем проверяем коллайдеры из модели (если JSON коллайдеров нет)
+                    if (jsonColliders.length === 0) {
+                        for (const collider of colliders) {
+                            if (!collider.geometry || !collider.visible) continue;
+
+                            try {
+                                // Обновляем матрицу мира для коллайдера
+                                collider.updateMatrixWorld(true);
+                                
+                                // Создаем Box3 для коллайдера в мировых координатах
+                                const colliderBox = new THREE.Box3();
+                                colliderBox.setFromObject(collider);
+
+                                // Проверяем пересечение
+                                if (playerBox.intersectsBox(colliderBox)) {
+                                    console.log('🚫 КОЛЛИЗИЯ! Объект:', collider.name || 'unnamed');
+                                    console.log('  Player box:', playerBox.min, '->', playerBox.max);
+                                    console.log('  Collider box:', colliderBox.min, '->', colliderBox.max);
+                                    return true;
+                                } else {
+                                    // Отладка: почему коллизия не обнаружена
+                                    if (!window.collisionDebugShown) {
+                                        console.log('🔍 Отладка коллизии для', collider.name || 'unnamed');
+                                        console.log('  Player box:', playerBox.min, '->', playerBox.max);
+                                        console.log('  Collider box:', colliderBox.min, '->', colliderBox.max);
+                                        console.log('  Пересечение по X:', playerBox.min.x <= colliderBox.max.x && playerBox.max.x >= colliderBox.min.x);
+                                        console.log('  Пересечение по Y:', playerBox.min.y <= colliderBox.max.y && playerBox.max.y >= colliderBox.min.y);
+                                        console.log('  Пересечение по Z:', playerBox.min.z <= colliderBox.max.z && playerBox.max.z >= colliderBox.min.z);
+                                        window.collisionDebugShown = true;
+                                    }
+                                }
+                            } catch (error) {
+                                console.warn('Ошибка при проверке коллизии:', error);
+                                continue;
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                // Применяем движение с проверкой коллизий
+                const targetPosition = player.position.clone();
+                targetPosition.add(direction.clone().multiplyScalar(moveDistance));
+
+                // Проверяем коллизии по осям отдельно для плавного движения
+                let safePosition = player.position.clone();
+                
+                // Отладочная информация о коллайдерах (только при первом движении)
+                if ((jsonColliders.length > 0 || colliders.length > 0) && !window.colliderDebugShown) {
+                    console.log('🔍 Проверяем коллизии с', jsonColliders.length, 'JSON коллайдерами и', colliders.length, 'модельными коллайдерами');
+                    console.log('📍 Позиция игрока:', player.position);
                     
-                    if (canSlide) {
-                        player.position.copy(slidePos);
+                    // Показываем JSON коллайдеры
+                    jsonColliders.forEach((col, i) => {
+                        console.log(`JSON Коллайдер ${i}:`, 
+                            'Min:', col.box.min, 'Max:', col.box.max, 'Size:', col.box.getSize(new THREE.Vector3()));
+                        console.log(`  Игрок Y: ${player.position.y}, JSON Коллайдер Y: ${col.box.min.y} - ${col.box.max.y}`);
+                    });
+                    
+                    // Показываем модельные коллайдеры
+                    colliders.forEach((col, i) => {
+                        col.updateMatrixWorld(true);
+                        const box = new THREE.Box3().setFromObject(col);
+                        console.log(`Модельный Коллайдер ${i}:`, col.name || 'unnamed', 
+                            'Min:', box.min, 'Max:', box.max, 'Size:', box.getSize(new THREE.Vector3()));
+                        console.log(`  Игрок Y: ${player.position.y}, Модельный Коллайдер Y: ${box.min.y} - ${box.max.y}`);
+                    });
+                    window.colliderDebugShown = true;
+                }
+                console.log('Исходная позиция:', safePosition);
+
+                // Проверяем движение по X
+                if (Math.abs(direction.x) > 0.001) {
+                    const xTestPosition = safePosition.clone();
+                    xTestPosition.x = targetPosition.x;
+                    const hasCollisionX = checkCollision(xTestPosition);
+                    if (!hasCollisionX) {
+                        safePosition.x = targetPosition.x;
+                    } else {
+                        console.log('🚫 X коллизия заблокирована');
                     }
                 }
+
+                // Проверяем движение по Z
+                if (Math.abs(direction.z) > 0.001) {
+                    const zTestPosition = safePosition.clone();
+                    zTestPosition.z = targetPosition.z;
+                    const hasCollisionZ = checkCollision(zTestPosition);
+                    if (!hasCollisionZ) {
+                        safePosition.z = targetPosition.z;
+                    } else {
+                        console.log('🚫 Z коллизия заблокирована');
+                    }
+                }
+                // Обновляем позицию игрока
+                player.position.copy(safePosition);
             };
 
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
             const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
             
-            // Применяем движение с плавностью
-            if (move.forward) tryMove(forward);
-            if (move.backward) tryMove(forward.clone().multiplyScalar(-1));
-            if (move.strafeLeft) tryMove(right.clone().multiplyScalar(-1));
-            if (move.strafeRight) tryMove(right);
+                // Применяем движение с проверкой коллизий
+                if (move.forward) {
+                    tryMove(forward);
+                }
+                if (move.backward) {
+                    tryMove(forward.clone().multiplyScalar(-1));
+                }
+                if (move.strafeLeft) {
+                    tryMove(right.clone().multiplyScalar(-1));
+                }
+                if (move.strafeRight) {
+                    tryMove(right);
+                }
 
             // Отправляем позицию внутри интерьера
             if (socketRef.current) {

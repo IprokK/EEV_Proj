@@ -100,6 +100,9 @@ export class CameraManager {
         
         this.fpPitch = 0;
         this.fpCamera.updateProjectionMatrix();
+        
+        // Запрашиваем pointer lock для управления мышью
+        this.requestPointerLock();
     }
 
     /**
@@ -108,6 +111,27 @@ export class CameraManager {
     switchToOrthoCamera() {
         this.currentCamera = this.orthoCamera;
         this.fpPitch = 0;
+        
+        // Выходим из pointer lock
+        this.exitPointerLock();
+    }
+
+    /**
+     * Запрос pointer lock для управления мышью
+     */
+    requestPointerLock() {
+        if (document.body.requestPointerLock) {
+            document.body.requestPointerLock();
+        }
+    }
+
+    /**
+     * Выход из pointer lock
+     */
+    exitPointerLock() {
+        if (document.exitPointerLock) {
+            document.exitPointerLock();
+        }
     }
 
     /**

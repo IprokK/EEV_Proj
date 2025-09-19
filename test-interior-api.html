@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест API интерьера</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .result {
+            background: #f9f9f9;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .error {
+            background: #ffe6e6;
+            color: #d00;
+        }
+        .success {
+            background: #e6ffe6;
+            color: #060;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Тест API интерьера</h1>
+        
+        <div class="test-section">
+            <h3>1. Проверка токена</h3>
+            <button onclick="checkToken()">Проверить токен</button>
+            <div id="tokenResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2. Тест API интерьера</h3>
+            <input type="number" id="interiorId" placeholder="ID интерьера" value="101">
+            <button onclick="testInteriorAPI()">Тестировать API</button>
+            <div id="apiResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3. Тест загрузки GLB</h3>
+            <input type="text" id="glbUrl" placeholder="URL GLB файла">
+            <button onclick="testGLBLoad()">Тестировать GLB</button>
+            <div id="glbResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>4. Полный тест интерьера</h3>
+            <button onclick="fullInteriorTest()">Полный тест</button>
+            <div id="fullResult" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        function log(elementId, message, isError = false) {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = isError ? 'error' : 'success';
+            element.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+        }
+        
+        function clear(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+        
+        async function checkToken() {
+            clear('tokenResult');
+            log('tokenResult', 'Проверяем токен...');
+            
+            const token = localStorage.getItem('token');
+            if (!token) {
+                log('tokenResult', 'Токен не найден! Попробуйте войти в основную игру сначала.', true);
+                log('tokenResult', 'Или введите токен вручную:', false);
+                const manualToken = prompt('Введите токен из localStorage основной игры:');
+                if (manualToken) {
+                    localStorage.setItem('token', manualToken);
+                    log('tokenResult', 'Токен сохранен, повторяем проверку...');
+                    setTimeout(checkToken, 1000);
+                }
+                return;
+            }
+            
+            log('tokenResult', `Токен найден: ${token.substring(0, 20)}...`);
+            
+            // Проверяем валидность токена
+            try {
+                const response = await fetch('/api/auth/me', {
+                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const userData = await response.json();
+                    log('tokenResult', `Токен валиден. Пользователь: ${userData.firstName} ${userData.lastName}`);
+                } else {
+                    log('tokenResult', `Токен невалиден: ${response.status}`, true);
+                }
+            } catch (error) {
+                log('tokenResult', `Ошибка проверки токена: ${error.message}`, true);
+            }
+        }
+        
+        async function testInteriorAPI() {
+            clear('apiResult');
+            const interiorId = document.getElementById('interiorId').value;
+            log('apiResult', `Тестируем API для интерьера ${interiorId}...`);
+            
+            const token = localStorage.getItem('token');
+            if (!token) {
+                log('apiResult', 'Токен не найден!', true);
+                return;
+            }
+            
+            try {
+                log('apiResult', 'Запрашиваем определение интерьера...');
+                const response = await fetch(`/api/interiors/${interiorId}/definition`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'include',
+                    cache: 'no-cache'
+                });
+                
+                log('apiResult', `Ответ сервера: ${response.status} ${response.statusText}`);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log('apiResult', `Ошибка: ${errorText}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                log('apiResult', `Данные получены: ${JSON.stringify(data, null, 2)}`);
+                
+                if (data.glb) {
+                    const glbUrl = window.location.origin + data.glb;
+                    log('apiResult', `GLB URL: ${glbUrl}`);
+                    
+                    // Проверяем доступность GLB файла
+                    try {
+                        const headResponse = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
+                        log('apiResult', `GLB файл доступен: ${headResponse.status}`);
+                    } catch (error) {
+                        log('apiResult', `GLB файл недоступен: ${error.message}`, true);
+                    }
+                }
+                
+            } catch (error) {
+                log('apiResult', `Ошибка API: ${error.message}`, true);
+            }
+        }
+        
+        async function testGLBLoad() {
+            clear('glbResult');
+            const glbUrl = document.getElementById('glbUrl').value;
+            
+            if (!glbUrl) {
+                log('glbResult', 'URL GLB не указан!', true);
+                return;
+            }
+            
+            log('glbResult', `Тестируем загрузку GLB: ${glbUrl}`);
+            
+            try {
+                // Проверяем доступность файла
+                const headResponse = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
+                log('glbResult', `Файл доступен: ${headResponse.status}`);
+                
+                if (headResponse.ok) {
+                    // Пробуем загрузить как ArrayBuffer
+                    const response = await fetch(glbUrl, { cache: 'no-cache' });
+                    const arrayBuffer = await response.arrayBuffer();
+                    log('glbResult', `GLB загружен: ${arrayBuffer.byteLength} байт`);
+                }
+                
+            } catch (error) {
+                log('glbResult', `Ошибка загрузки GLB: ${error.message}`, true);
+            }
+        }
+        
+        async function fullInteriorTest() {
+            clear('fullResult');
+            const interiorId = document.getElementById('interiorId').value;
+            log('fullResult', `Полный тест интерьера ${interiorId}...`);
+            
+            // 1. Проверяем токен
+            const token = localStorage.getItem('token');
+            if (!token) {
+                log('fullResult', 'Токен не найден!', true);
+                return;
+            }
+            
+            // 2. Получаем определение интерьера
+            try {
+                log('fullResult', 'Шаг 1: Получаем определение интерьера...');
+                const defResponse = await fetch(`/api/interiors/${interiorId}/definition`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'include',
+                    cache: 'no-cache'
+                });
+                
+                if (!defResponse.ok) {
+                    log('fullResult', `Ошибка получения определения: ${defResponse.status}`, true);
+                    return;
+                }
+                
+                const { glb, objects } = await defResponse.json();
+                log('fullResult', `Определение получено. GLB: ${glb}, Объектов: ${objects ? objects.length : 0}`);
+                
+                // 3. Проверяем GLB файл
+                const glbUrl = window.location.origin + glb;
+                log('fullResult', `Шаг 2: Проверяем GLB файл: ${glbUrl}`);
+                
+                const headResponse = await fetch(glbUrl, { method: 'HEAD', cache: 'no-cache' });
+                if (!headResponse.ok) {
+                    log('fullResult', `GLB файл недоступен: ${headResponse.status}`, true);
+                    return;
+                }
+                
+                log('fullResult', `GLB файл доступен: ${headResponse.status}`);
+                
+                // 4. Пробуем загрузить GLB
+                log('fullResult', 'Шаг 3: Загружаем GLB файл...');
+                const glbResponse = await fetch(glbUrl, { cache: 'no-cache' });
+                const arrayBuffer = await glbResponse.arrayBuffer();
+                log('fullResult', `GLB загружен: ${arrayBuffer.byteLength} байт`);
+                
+                // 5. Проверяем объекты интерьера
+                if (objects && objects.length > 0) {
+                    log('fullResult', `Шаг 4: Проверяем объекты интерьера (${objects.length} шт.)...`);
+                    for (let i = 0; i < Math.min(3, objects.length); i++) {
+                        const obj = objects[i];
+                        if (obj.model_url) {
+                            const objUrl = window.location.origin + obj.model_url;
+                            try {
+                                const objResponse = await fetch(objUrl, { method: 'HEAD', cache: 'no-cache' });
+                                log('fullResult', `Объект ${i + 1}: ${objResponse.status} - ${obj.model_url}`);
+                            } catch (error) {
+                                log('fullResult', `Объект ${i + 1}: Ошибка - ${obj.model_url}`, true);
+                            }
+                        }
+                    }
+                }
+                
+                log('fullResult', 'Тест завершен успешно!');
+                
+            } catch (error) {
+                log('fullResult', `Ошибка теста: ${error.message}`, true);
+            }
+        }
+        
+        // Автоматически проверяем токен при загрузке
+        window.addEventListener('load', () => {
+            checkToken();
+        });
+    </script>
+</body>
+</html>

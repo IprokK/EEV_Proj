@@ -5,13 +5,16 @@ import * as THREE from 'three';
  * Отвечает за создание, управление и анимацию игрока
  */
 export class PlayerManager {
-    constructor(sceneManager) {
+    constructor(sceneManager, collisionManager = null) {
         this.sceneManager = sceneManager;
+        this.collisionManager = collisionManager;
         this.player = null;
         this.mixer = null;
         this.moveSpeed = 2.5;
+        this.interiorMoveSpeed = 3.0; // Скорость движения в интерьере
         this.savedPosition = new THREE.Vector3();
         this.remotePlayers = {};
+        this.isInInterior = false;
         
         this.init();
     }
@@ -51,7 +54,7 @@ export class PlayerManager {
     movePlayer(direction, deltaTime) {
         if (!this.player) return;
         
-        const moveDistance = this.moveSpeed * deltaTime;
+        const moveDistance = this.isInInterior ? this.interiorMoveSpeed * deltaTime : this.moveSpeed * deltaTime;
         const moveVector = new THREE.Vector3();
         
         if (direction.forward) moveVector.z -= moveDistance;
@@ -59,7 +62,20 @@ export class PlayerManager {
         if (direction.left) moveVector.x -= moveDistance;
         if (direction.right) moveVector.x += moveDistance;
         
-        this.player.position.add(moveVector);
+        // Если игрок в интерьере, используем систему коллизий
+        if (this.isInInterior && this.collisionManager) {
+            const targetPosition = this.player.position.clone().add(moveVector);
+            const safePosition = this.collisionManager.checkInteriorCollisions(
+                this.player.position,
+                targetPosition,
+                moveVector,
+                deltaTime
+            );
+            this.player.position.copy(safePosition);
+        } else {
+            // Обычное движение без коллизий
+            this.player.position.add(moveVector);
+        }
         
         // Поворачиваем игрока в направлении движения
         if (moveVector.length() > 0) {
@@ -74,10 +90,49 @@ export class PlayerManager {
     teleportPlayer(position, rotation = null) {
         if (!this.player) return;
         
-        this.player.position.copy(position);
+        // Если игрок в интерьере, проверяем безопасность позиции
+        if (this.isInInterior && this.collisionManager) {
+            const safePosition = this.collisionManager.getSafeTeleportPosition(position);
+            this.player.position.copy(safePosition);
+        } else {
+            this.player.position.copy(position);
+        }
+        
         if (rotation !== null) {
             this.player.rotation.y = rotation;
         }
+    }
+
+    /**
+     * Сохранение позиции игрока
+     */
+    savePosition() {
+        if (this.player) {
+            this.savedPosition.copy(this.player.position);
+        }
+    }
+
+    /**
+     * Восстановление позиции игрока
+     */
+    restorePosition() {
+        if (this.player && this.savedPosition.length() > 0) {
+            this.player.position.copy(this.savedPosition);
+        }
+    }
+
+    /**
+     * Установка состояния интерьера
+     */
+    setInInterior(inInterior) {
+        this.isInInterior = inInterior;
+    }
+
+    /**
+     * Получение поворота игрока
+     */
+    getPlayerRotation() {
+        return this.player ? this.player.rotation.clone() : new THREE.Euler();
     }
 
     /**

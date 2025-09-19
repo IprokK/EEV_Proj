@@ -4,6 +4,7 @@ import { CameraManager } from './CameraManager.js';
 import { PlayerManager } from './PlayerManager.js';
 import { RendererManager } from './RendererManager.js';
 import { InteriorManager } from './InteriorManager.js';
+import { CollisionManager } from './CollisionManager.js';
 
 /**
  * Основной класс игры
@@ -18,7 +19,8 @@ export class GameCore {
         // Инициализация модулей
         this.sceneManager = new SceneManager();
         this.cameraManager = new CameraManager();
-        this.playerManager = new PlayerManager(this.sceneManager);
+        this.collisionManager = new CollisionManager(this.sceneManager);
+        this.playerManager = new PlayerManager(this.sceneManager, this.collisionManager);
         this.rendererManager = new RendererManager(container);
         this.interiorManager = new InteriorManager(this.sceneManager);
         
@@ -287,6 +289,7 @@ export class GameCore {
     async enterInterior(interiorId) {
         try {
             this.isInInterior = true;
+            this.playerManager.setInInterior(true);
             
             // Сохраняем позицию игрока
             const playerPosition = this.playerManager.getPlayerPosition();
@@ -305,6 +308,7 @@ export class GameCore {
         } catch (error) {
             console.error('Ошибка входа в интерьер:', error);
             this.isInInterior = false;
+            this.playerManager.setInInterior(false);
         }
     }
 
@@ -316,6 +320,7 @@ export class GameCore {
         
         try {
             this.isInInterior = false;
+            this.playerManager.setInInterior(false);
             
             // Восстанавливаем позицию игрока
             this.playerManager.restorePosition();
@@ -414,6 +419,13 @@ export class GameCore {
     }
 
     /**
+     * Получение менеджера коллизий
+     */
+    getCollisionManager() {
+        return this.collisionManager;
+    }
+
+    /**
      * Очистка ресурсов
      */
     dispose() {
@@ -425,6 +437,7 @@ export class GameCore {
         this.playerManager.dispose();
         this.rendererManager.dispose();
         this.interiorManager.dispose();
+        this.collisionManager.dispose();
         
         // Удаляем обработчики событий
         document.removeEventListener('keydown', this.handleKeyDown.bind(this));

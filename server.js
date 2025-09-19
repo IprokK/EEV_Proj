@@ -1666,6 +1666,57 @@ app.get('/api/cities', authenticate, async (req, res) => {
   }
 });
 
+// API endpoint для сохранения коллайдеров города
+app.post('/api/colliders/city/:cityId', authenticate, async (req, res) => {
+  const cityId = req.params.cityId;
+  const collidersData = req.body;
+  
+  try {
+    // Сохраняем коллайдеры в JSON файл
+    const fileName = `colliders_city_${cityId}.json`;
+    const filePath = pathLib.join(__dirname, 'public', fileName);
+    
+    // Создаем директорию если не существует
+    await fs.promises.mkdir(pathLib.dirname(filePath), { recursive: true });
+    
+    // Записываем данные в файл
+    await fs.promises.writeFile(filePath, JSON.stringify(collidersData, null, 2), 'utf8');
+    
+    console.log(`Коллайдеры для города ${cityId} сохранены в ${fileName}`);
+    res.json({ success: true, message: 'Коллайдеры сохранены успешно' });
+  } catch (error) {
+    console.error('Ошибка сохранения коллайдеров:', error);
+    res.status(500).json({ error: 'Ошибка сохранения коллайдеров' });
+  }
+});
+
+// API endpoint для получения коллайдеров города
+app.get('/api/colliders/city/:cityId', authenticate, async (req, res) => {
+  const cityId = req.params.cityId;
+  
+  try {
+    const fileName = `colliders_city_${cityId}.json`;
+    const filePath = pathLib.join(__dirname, 'public', fileName);
+    
+    // Проверяем существование файла
+    try {
+      await fs.promises.access(filePath);
+    } catch (error) {
+      // Файл не существует, возвращаем пустой массив
+      return res.json({ colliders: [] });
+    }
+    
+    // Читаем файл
+    const fileContent = await fs.promises.readFile(filePath, 'utf8');
+    const data = JSON.parse(fileContent);
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Ошибка чтения коллайдеров:', error);
+    res.status(500).json({ error: 'Ошибка чтения коллайдеров' });
+  }
+});
+
 app.use((req, res) => {
   res.sendFile(pathLib.join(__dirname, 'build', 'index.html'));
 });
