@@ -52,13 +52,32 @@ export default function EnhancedCollisionEditor() {
   
   // Состояние для режима TransformControls
   const [transformMode, setTransformMode] = useState('translate'); // 'translate', 'rotate', 'scale'
+  
+  // Состояние для автоматического сохранения
+  const [autoSave, setAutoSave] = useState(true);
+  const [lastSaved, setLastSaved] = useState(null);
+  const autoSaveTimeoutRef = useRef(null);
+  const [showWireframes, setShowWireframes] = useState(true); // Новое состояние для рамок
 
-  const colliderMaterial = useMemo(() => new THREE.MeshBasicMaterial({ 
-    color: new THREE.Color(selectedColor.r, selectedColor.g, selectedColor.b), 
-    transparent: true, 
-    opacity: selectedOpacity, 
-    depthWrite: false 
-  }), [selectedColor, selectedOpacity]);
+  const colliderMaterial = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial({ 
+      color: new THREE.Color(selectedColor.r, selectedColor.g, selectedColor.b), 
+      transparent: true, 
+      opacity: selectedOpacity, 
+      depthWrite: false 
+    });
+    
+    // Если прозрачность 0, делаем материал невидимым
+    if (selectedOpacity === 0) {
+      material.visible = false;
+      material.alphaTest = 0;
+    } else {
+      material.visible = true;
+      material.alphaTest = 0.1;
+    }
+    
+    return material;
+  }, [selectedColor, selectedOpacity]);
   
   const colliderEdgeMaterial = useMemo(() => new THREE.LineBasicMaterial({ 
     color: new THREE.Color(selectedColor.r, selectedColor.g, selectedColor.b) 
@@ -107,6 +126,17 @@ export default function EnhancedCollisionEditor() {
     transform.addEventListener('objectChange', () => {
       if (selected) {
         updateColliderData(selected);
+        // Обновляем параметры в UI при изменении через TransformControls
+        setColliderPosition({ x: selected.position.x, y: selected.position.y, z: selected.position.z });
+        setColliderRotation({ x: selected.rotation.x, y: selected.rotation.y, z: selected.rotation.z });
+        setColliderScale({ x: selected.scale.x, y: selected.scale.y, z: selected.scale.z });
+        console.log('🔄 Параметры обновлены через TransformControls:', {
+          position: selected.position,
+          rotation: selected.rotation,
+          scale: selected.scale
+        });
+        // Запускаем автоматическое сохранение
+        triggerAutoSave();
       }
     });
     scene.add(transform);
@@ -356,12 +386,21 @@ export default function EnhancedCollisionEditor() {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/colliders/city/${cityId}`, {
+      // Сначала пробуем новый API с базой данных
+      let response = await fetch(`/api/colliders/city/${cityId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
+      // Если новый API недоступен (500 ошибка), пробуем старый JSON API
+      if (!response.ok && response.status === 500) {
+        console.log('🔄 Новый API недоступен, пробуем старый JSON API...');
+        response = await fetch(`/api/colliders?cityId=${cityId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+      
       if (!response.ok) {
-        console.log('JSON файл не найден, создаем новый');
+        console.log('📄 JSON файл не найден, создаем новый');
         collidersRef.current = [];
         return;
       }
@@ -380,6 +419,7 @@ export default function EnhancedCollisionEditor() {
         const mesh = new THREE.Mesh(geom, colliderMaterial.clone());
         const edges = new THREE.EdgesGeometry(mesh.geometry);
         const line = new THREE.LineSegments(edges, colliderEdgeMaterial.clone());
+        line.visible = showWireframes; // Учитываем настройку видимости рамок
         mesh.add(line);
         
         mesh.position.set(c.position?.x || 0, c.position?.y || 0, c.position?.z || 0);
@@ -394,12 +434,23 @@ export default function EnhancedCollisionEditor() {
         }
         if (c.opacity !== undefined) {
           mesh.material.opacity = c.opacity;
+          // Если прозрачность 0, делаем материал невидимым
+          if (c.opacity === 0) {
+            mesh.material.visible = false;
+            mesh.material.transparent = true;
+            mesh.material.alphaTest = 0;
+          } else {
+            mesh.material.visible = true;
+            mesh.material.transparent = true;
+            mesh.material.alphaTest = 0.1;
+          }
         }
         
         mesh.userData = { 
           type: c.type || 'box',
           color: c.color || { r: 1, g: 0, b: 0 },
-          opacity: c.opacity || 0.3
+          opacity: c.opacity || 0.3,
+          id: c.id // Добавляем ID из базы данных
         };
         
         sceneRef.current.add(mesh);
@@ -438,7 +489,8 @@ export default function EnhancedCollisionEditor() {
             z: mesh.scale.z
           },
           color: mesh.userData.color || { r: 1, g: 0, b: 0 },
-          opacity: mesh.userData.opacity || 0.3
+          opacity: mesh.userData.opacity || 0.3,
+          id: mesh.userData.id // Добавляем ID для существующих коллайдеров
         };
       });
 
@@ -446,7 +498,9 @@ export default function EnhancedCollisionEditor() {
       
       // Отправляем данные на сервер для сохранения
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/colliders/city/${cityId}`, {
+      
+      // Сначала пробуем новый API с базой данных
+      let response = await fetch(`/api/colliders/city/${cityId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -454,6 +508,19 @@ export default function EnhancedCollisionEditor() {
         },
         body: JSON.stringify(jsonData)
       });
+      
+      // Если новый API недоступен (500 ошибка), пробуем старый JSON API
+      if (!response.ok && response.status === 500) {
+        console.log('🔄 Новый API недоступен, пробуем старый JSON API...');
+        response = await fetch('/api/colliders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ ...jsonData, cityId: parseInt(cityId) })
+        });
+      }
 
       if (response.ok) {
         const result = await response.json();
@@ -482,6 +549,7 @@ export default function EnhancedCollisionEditor() {
     const mesh = new THREE.Mesh(geom, colliderMaterial.clone());
     const edges = new THREE.EdgesGeometry(mesh.geometry);
     const line = new THREE.LineSegments(edges, colliderEdgeMaterial.clone());
+    line.visible = showWireframes; // Учитываем настройку видимости рамок
     mesh.add(line);
 
     // Вычисляем позицию перед камерой
@@ -503,7 +571,8 @@ export default function EnhancedCollisionEditor() {
     mesh.userData = { 
       type: shapeType,
       color: { ...selectedColor },
-      opacity: selectedOpacity
+      opacity: selectedOpacity,
+      id: null // Новый коллайдер пока не имеет ID
     };
 
     sceneRef.current.add(mesh);
@@ -513,6 +582,8 @@ export default function EnhancedCollisionEditor() {
     
     console.log(`✅ Создан коллайдер типа "${shapeType}" в позиции:`, position);
     console.log(`📊 Всего коллайдеров: ${collidersRef.current.length}`);
+    // Запускаем автоматическое сохранение
+    triggerAutoSave();
   };
 
   // Функция для обновления предварительного просмотра позиции коллайдера
@@ -620,6 +691,7 @@ export default function EnhancedCollisionEditor() {
     const mesh = new THREE.Mesh(geom, newMaterial);
     const edges = new THREE.EdgesGeometry(mesh.geometry);
     const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+    line.visible = showWireframes; // Учитываем настройку видимости рамок
     mesh.add(line);
     
     // Копируем параметры с небольшим смещением
@@ -637,7 +709,8 @@ export default function EnhancedCollisionEditor() {
     mesh.userData = {
       type: selected.userData.type,
       color: { ...selected.userData.color },
-      opacity: selected.userData.opacity
+      opacity: selected.userData.opacity,
+      id: null // Дублированный коллайдер пока не имеет ID
     };
     
     sceneRef.current.add(mesh);
@@ -652,6 +725,8 @@ export default function EnhancedCollisionEditor() {
       rotation: { x: mesh.rotation.x, y: mesh.rotation.y, z: mesh.rotation.z },
       scale: { x: mesh.scale.x, y: mesh.scale.y, z: mesh.scale.z }
     });
+    // Запускаем автоматическое сохранение
+    triggerAutoSave();
   };
 
   // Функция для телепортации камеры к интерьеру
@@ -679,6 +754,31 @@ export default function EnhancedCollisionEditor() {
     console.log(`Режим TransformControls изменен на: ${mode}`);
   };
 
+  // Функция для принудительной перезагрузки коллайдеров из базы данных
+  const reloadColliders = async () => {
+    console.log('🔄 Принудительная перезагрузка коллайдеров из БД...');
+    await loadCollidersFromJSON();
+    console.log('✅ Коллайдеры перезагружены');
+  };
+
+  // Функция для переключения видимости рамок
+  const toggleWireframes = () => {
+    const newShowWireframes = !showWireframes;
+    setShowWireframes(newShowWireframes);
+    
+    // Обновляем видимость рамок у всех коллайдеров
+    collidersRef.current.forEach(c => {
+      const mesh = c.mesh;
+      mesh.children.forEach(child => {
+        if (child.type === 'LineSegments') {
+          child.visible = newShowWireframes;
+        }
+      });
+    });
+    
+    console.log(`🔲 Рамки ${newShowWireframes ? 'включены' : 'отключены'}`);
+  };
+
   // Функция для отладки коллайдеров
   const debugColliders = () => {
     console.log('🔍 Отладка коллайдеров:');
@@ -695,6 +795,27 @@ export default function EnhancedCollisionEditor() {
     });
   };
 
+  // Функция автоматического сохранения
+  const triggerAutoSave = () => {
+    if (!autoSave || !cityId) return;
+    
+    // Очищаем предыдущий таймер
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+    
+    // Устанавливаем новый таймер на 2 секунды
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await saveCollidersToJSON();
+        setLastSaved(new Date());
+        console.log('💾 Автоматическое сохранение выполнено');
+      } catch (error) {
+        console.error('❌ Ошибка автоматического сохранения:', error);
+      }
+    }, 2000);
+  };
+
   // Обновление цвета выбранного коллайдера
   const updateSelectedColliderColor = () => {
     if (selected) {
@@ -704,12 +825,24 @@ export default function EnhancedCollisionEditor() {
       selected.userData.color = { ...selectedColor };
       selected.userData.opacity = selectedOpacity;
       selected.material.opacity = selectedOpacity;
+      
+      // Если прозрачность 0, делаем материал невидимым
+      if (selectedOpacity === 0) {
+        selected.material.visible = false;
+        selected.material.transparent = true;
+        selected.material.alphaTest = 0;
+      } else {
+        selected.material.visible = true;
+        selected.material.transparent = true;
+        selected.material.alphaTest = 0.1;
+      }
+      
       updateColliderData(selected);
     }
   };
 
   // Удаление выбранного коллайдера
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if (!selected) {
       console.log('❌ Нет выбранного коллайдера для удаления');
       return;
@@ -717,6 +850,27 @@ export default function EnhancedCollisionEditor() {
     
     console.log('🗑️ Удаляем коллайдер:', selected);
     console.log('📊 Всего коллайдеров до удаления:', collidersRef.current.length);
+    
+    // Если у коллайдера есть ID, удаляем его из базы данных
+    if (selected.userData.id) {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`/api/colliders/${selected.userData.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          console.log(`✅ Коллайдер ${selected.userData.id} удален из базы данных`);
+        } else {
+          console.error(`❌ Ошибка удаления коллайдера ${selected.userData.id} из БД:`, await response.text());
+        }
+      } catch (error) {
+        console.error('❌ Ошибка при удалении коллайдера из БД:', error);
+      }
+    } else {
+      console.log('⚠️ У коллайдера нет ID, удаляем только из фронтенда');
+    }
     
     // Удаляем из сцены
     sceneRef.current.remove(selected);
@@ -733,6 +887,8 @@ export default function EnhancedCollisionEditor() {
     setSelected(null);
     
     console.log('✅ Коллайдер успешно удален');
+    // Запускаем автоматическое сохранение для синхронизации
+    triggerAutoSave();
   };
 
   // Обработка клика по объекту
@@ -744,24 +900,45 @@ export default function EnhancedCollisionEditor() {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, cameraRef.current);
 
-    const intersects = raycaster.intersectObjects(collidersRef.current.map(c => c.mesh));
+    // Получаем все объекты коллайдеров (включая рамки)
+    const allColliderObjects = [];
+    collidersRef.current.forEach(c => {
+      allColliderObjects.push(c.mesh); // Основной меш
+      allColliderObjects.push(...c.mesh.children); // Рамки (дочерние объекты)
+    });
+
+    const intersects = raycaster.intersectObjects(allColliderObjects);
     
     if (intersects.length > 0) {
-      const clickedMesh = intersects[0].object;
-      setSelected(clickedMesh);
-      transformRef.current.attach(clickedMesh);
+      let clickedObject = intersects[0].object;
       
-      console.log('🎯 Выбран коллайдер:', clickedMesh);
+      // Если кликнули по рамке, находим родительский меш
+      if (clickedObject.type === 'LineSegments') {
+        clickedObject = clickedObject.parent;
+        console.log('🎯 Кликнули по рамке, выбираем родительский меш:', clickedObject);
+      }
+      
+      // Проверяем, что это действительно коллайдер из нашего списка
+      const collider = collidersRef.current.find(c => c.mesh === clickedObject);
+      if (!collider) {
+        console.log('❌ Кликнули по объекту, который не является коллайдером');
+        return;
+      }
+      
+      setSelected(clickedObject);
+      transformRef.current.attach(clickedObject);
+      
+      console.log('🎯 Выбран коллайдер:', clickedObject);
       console.log('📊 Всего коллайдеров в массиве:', collidersRef.current.length);
       
       // Обновляем цветовую палитру
-      setSelectedColor(clickedMesh.userData.color || { r: 1, g: 0, b: 0 });
-      setSelectedOpacity(clickedMesh.userData.opacity || 0.3);
+      setSelectedColor(clickedObject.userData.color || { r: 1, g: 0, b: 0 });
+      setSelectedOpacity(clickedObject.userData.opacity || 0.3);
       
       // Обновляем параметры коллайдера
-      setColliderPosition({ x: clickedMesh.position.x, y: clickedMesh.position.y, z: clickedMesh.position.z });
-      setColliderRotation({ x: clickedMesh.rotation.x, y: clickedMesh.rotation.y, z: clickedMesh.rotation.z });
-      setColliderScale({ x: clickedMesh.scale.x, y: clickedMesh.scale.y, z: clickedMesh.scale.z });
+      setColliderPosition({ x: clickedObject.position.x, y: clickedObject.position.y, z: clickedObject.position.z });
+      setColliderRotation({ x: clickedObject.rotation.x, y: clickedObject.rotation.y, z: clickedObject.rotation.z });
+      setColliderScale({ x: clickedObject.scale.x, y: clickedObject.scale.y, z: clickedObject.scale.z });
     } else {
       setSelected(null);
       transformRef.current.detach();
@@ -1080,6 +1257,25 @@ export default function EnhancedCollisionEditor() {
                   Масштаб
                 </button>
               </div>
+              
+              {/* Переключение рамок */}
+              <div style={{ marginBottom: '8px' }}>
+                <button 
+                  onClick={toggleWireframes}
+                  style={{ 
+                    width: '100%',
+                    padding: '8px',
+                    backgroundColor: showWireframes ? '#27ae60' : '#e74c3c',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '11px'
+                  }}
+                >
+                  {showWireframes ? '🔲 Скрыть рамки' : '🔲 Показать рамки'}
+                </button>
+              </div>
             </div>
             
             <div style={{ marginBottom: '10px' }}>
@@ -1355,6 +1551,82 @@ export default function EnhancedCollisionEditor() {
               Интерьеры не найдены
             </p>
           )}
+        </div>
+
+        {/* Управление сохранением */}
+        <div style={{ marginBottom: '20px' }}>
+          <h3>Управление сохранением</h3>
+          
+          <div style={{ marginBottom: '10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input 
+                type="checkbox" 
+                checked={autoSave}
+                onChange={(e) => setAutoSave(e.target.checked)}
+                style={{ transform: 'scale(1.2)' }}
+              />
+              <span style={{ fontSize: '14px' }}>Автоматическое сохранение</span>
+            </label>
+          </div>
+          
+          {lastSaved && (
+            <div style={{ fontSize: '12px', color: '#27ae60', marginBottom: '10px' }}>
+              💾 Последнее сохранение: {lastSaved.toLocaleTimeString()}
+            </div>
+          )}
+          
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button 
+              onClick={saveCollidersToJSON}
+              disabled={isSaving}
+              style={{ 
+                flex: 1,
+                padding: '8px',
+                backgroundColor: isSaving ? '#95a5a6' : '#27ae60',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: isSaving ? 'not-allowed' : 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              {isSaving ? 'Сохранение...' : '💾 Сохранить сейчас'}
+            </button>
+            
+            <button 
+              onClick={loadCollidersFromJSON}
+              disabled={isLoading}
+              style={{ 
+                flex: 1,
+                padding: '8px',
+                backgroundColor: isLoading ? '#95a5a6' : '#3498db',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              {isLoading ? 'Загрузка...' : '🔄 Перезагрузить'}
+            </button>
+            
+            <button 
+              onClick={reloadColliders}
+              disabled={isLoading}
+              style={{ 
+                flex: 1,
+                padding: '8px',
+                backgroundColor: isLoading ? '#95a5a6' : '#e67e22',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              {isLoading ? 'Загрузка...' : '🔄 Синхронизировать'}
+            </button>
+          </div>
         </div>
 
         {/* Информация */}

@@ -616,6 +616,80 @@ function Game({ avatarUrl, gender }) {
                 });
             };
             
+            // Функция для принудительной перезагрузки всех коллайдеров из базы данных
+            window.reloadAllColliders = async () => {
+                console.log('🔄 Принудительная перезагрузка всех коллайдеров...');
+                try {
+                    // Перезагружаем коллизионные коллайдеры
+                    await loadCollidersFromJSON(1);
+                    console.log('✅ Коллизионные коллайдеры перезагружены');
+                    
+                    // Перезагружаем визуальные коллайдеры
+                    await loadCustomCollidersForCity(1);
+                    console.log('✅ Визуальные коллайдеры перезагружены');
+                    
+                    console.log('🎉 Все коллайдеры успешно перезагружены из базы данных');
+                } catch (error) {
+                    console.error('❌ Ошибка при перезагрузке коллайдеров:', error);
+                }
+            };
+            
+            // Функция для проверки состояния коллайдеров в базе данных
+            window.checkCollidersInDB = async () => {
+                console.log('🔍 Проверяем коллайдеры в базе данных...');
+                try {
+                    const token = localStorage.getItem('token');
+                    const response = await fetch('/api/colliders/city/1', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('📊 Коллайдеры в БД:', data.colliders?.length || 0, 'штук');
+                        console.log('🔍 Данные из БД:', data);
+                        
+                        // Сравниваем с текущими коллайдерами в игре
+                        console.log('📊 Коллизионные коллайдеры в игре:', jsonCollidersRef.current?.length || 0, 'штук');
+                        console.log('📊 Визуальные коллайдеры в игре:', visualCollidersRef.current?.length || 0, 'штук');
+                        
+                        return data;
+                    } else {
+                        console.error('❌ Ошибка загрузки коллайдеров из БД:', response.status);
+                    }
+                } catch (error) {
+                    console.error('❌ Ошибка при проверке коллайдеров в БД:', error);
+                }
+            };
+            
+            // Функция для обновления прозрачности всех коллизионных объектов
+            window.updateColliderOpacity = (opacity) => {
+                console.log('👁️ Обновляем прозрачность всех коллизионных объектов:', opacity);
+                obstacles.forEach(obstacle => {
+                    if (obstacle.mesh && obstacle.mesh.userData.isCustomCollider) {
+                        obstacle.mesh.material.opacity = opacity;
+                        if (opacity === 0) {
+                            obstacle.mesh.material.visible = false;
+                            obstacle.mesh.material.alphaTest = 0;
+                        } else {
+                            obstacle.mesh.material.visible = true;
+                            obstacle.mesh.material.alphaTest = 0.1;
+                        }
+                    }
+                });
+                console.log('✅ Прозрачность обновлена для', obstacles.length, 'коллизионных объектов');
+            };
+            
+            // Функция для включения/выключения отображения коллизионных объектов
+            window.toggleColliderVisibility = (visible) => {
+                console.log('👁️ Переключаем видимость коллизионных объектов:', visible);
+                obstacles.forEach(obstacle => {
+                    if (obstacle.mesh && obstacle.mesh.userData.isCustomCollider) {
+                        obstacle.mesh.visible = visible;
+                    }
+                });
+                console.log('✅ Видимость коллизионных объектов:', visible ? 'включена' : 'выключена');
+            };
+            
             window.setColliderColor = (r, g, b) => {
                 console.log('🎨 Устанавливаем цвет коллайдеров:', { r, g, b });
                 visualCollidersRef.current.forEach(collider => {
@@ -1341,13 +1415,24 @@ function Game({ avatarUrl, gender }) {
         }
     };
 
-    // Функция для загрузки коллизионных данных из JSON
+    // Функция для загрузки коллизионных данных из базы данных с fallback на JSON
     const loadCollidersFromJSON = async (cityId = 1) => {
         console.log('🔍 loadCollidersFromJSON вызвана для города:', cityId);
         try {
-            const url = `/colliders_city_${cityId}.json`;
-            console.log('🔍 Загружаем URL:', url);
-            const response = await fetch(url);
+            // Сначала пробуем загрузить из базы данных
+            const token = localStorage.getItem('token');
+            let response = await fetch(`/api/colliders/city/${cityId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            // Если новый API недоступен (500 ошибка), пробуем старый JSON API
+            if (!response.ok && response.status === 500) {
+                console.log('🔄 Новый API недоступен, пробуем старый JSON API...');
+                const url = `/colliders_city_${cityId}.json`;
+                console.log('🔍 Загружаем URL:', url);
+                response = await fetch(url);
+            }
+            
             console.log('🔍 Ответ сервера:', response.status, response.ok);
             
             if (!response.ok) {
@@ -1357,10 +1442,26 @@ function Game({ avatarUrl, gender }) {
             
             const data = await response.json();
             console.log('🔍 Загруженные данные:', data);
-            console.log('Загружены коллизионные данные:', data.colliders.length, 'объектов');
             
-            // Преобразуем JSON данные в Box3 объекты
-            const colliderBoxes = data.colliders.map((colliderData, index) => {
+            // Обрабатываем данные в зависимости от источника
+            let collidersData;
+            if (data.colliders) {
+                // Данные из базы данных (уже в правильном формате)
+                collidersData = data.colliders;
+                console.log('📊 Загружены коллайдеры из базы данных:', collidersData.length, 'объектов');
+                console.log('🔍 Пример коллайдера из БД:', collidersData[0]);
+            } else if (Array.isArray(data)) {
+                // Данные из JSON файла (прямой массив)
+                collidersData = data;
+                console.log('📄 Загружены коллайдеры из JSON файла:', collidersData.length, 'объектов');
+                console.log('🔍 Пример коллайдера из JSON:', collidersData[0]);
+            } else {
+                console.warn('Неизвестный формат данных коллайдеров:', data);
+                return [];
+            }
+            
+            // Преобразуем данные в Box3 объекты
+            const colliderBoxes = collidersData.map((colliderData, index) => {
                 const box = new THREE.Box3();
                 
                 // Создаем центр бокса
@@ -3316,12 +3417,44 @@ function Game({ avatarUrl, gender }) {
 
         async function loadCustomCollidersForCity(cityIdParam) {
             try {
-                const cityIdNum = Number(cityIdParam) || 0;
-                const query = cityIdNum ? `?cityId=${encodeURIComponent(cityIdNum)}` : '';
-                const res = await fetch(`/api/colliders${query}`, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
-                if (!res.ok) return;
+                const cityIdNum = Number(cityIdParam) || 1;
+                console.log('🔍 loadCustomCollidersForCity для города:', cityIdNum);
+                
+                // Сначала пробуем новый API с базой данных
+                let res = await fetch(`/api/colliders/city/${cityIdNum}`, { 
+                    cache: 'no-store', 
+                    headers: { Authorization: `Bearer ${token}` } 
+                });
+                
+                // Если новый API недоступен (500 ошибка), пробуем старый JSON API
+                if (!res.ok && res.status === 500) {
+                    console.log('🔄 Новый API недоступен в loadCustomCollidersForCity, пробуем старый JSON API...');
+                    const query = cityIdNum ? `?cityId=${encodeURIComponent(cityIdNum)}` : '';
+                    res = await fetch(`/api/colliders${query}`, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+                }
+                
+                if (!res.ok) {
+                    console.warn('Не удалось загрузить кастомные коллайдеры для города:', cityIdNum);
+                    return;
+                }
+                
                 const data = await res.json();
-                const list = Array.isArray(data?.colliders) ? data.colliders : [];
+                console.log('🔍 Загруженные данные кастомных коллайдеров:', data);
+                
+                // Обрабатываем данные в зависимости от источника
+                let list;
+                if (data.colliders) {
+                    // Данные из базы данных
+                    list = data.colliders;
+                    console.log('📊 Загружены кастомные коллайдеры из базы данных:', list.length, 'объектов');
+                } else if (Array.isArray(data)) {
+                    // Данные из JSON файла
+                    list = data;
+                    console.log('📄 Загружены кастомные коллайдеры из JSON файла:', list.length, 'объектов');
+                } else {
+                    console.warn('Неизвестный формат данных кастомных коллайдеров:', data);
+                    return;
+                }
                 // Удаляем старые кастомные коллайдеры
                 obstacles = obstacles.filter(o => {
                     const keep = !o?.mesh?.userData?.isCustomCollider;
@@ -3336,7 +3469,25 @@ function Game({ avatarUrl, gender }) {
                     if (c.type === 'circle') geometry = new THREE.CylinderGeometry(1.5, 1.5, 2, 24);
                     else if (c.type === 'capsule') geometry = new THREE.CapsuleGeometry(1, 2, 4, 12);
                     else geometry = new THREE.BoxGeometry(2, 2, 2);
-                    const material = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.001, depthWrite: false });
+                    
+                    // Используем прозрачность из базы данных
+                    const opacity = c.opacity !== undefined ? c.opacity : 0.001;
+                    const material = new THREE.MeshBasicMaterial({ 
+                        color: 0x000000, 
+                        transparent: true, 
+                        opacity: opacity, 
+                        depthWrite: false 
+                    });
+                    
+                    // Если прозрачность 0, делаем материал невидимым
+                    if (opacity === 0) {
+                        material.visible = false;
+                        material.alphaTest = 0;
+                    } else {
+                        material.visible = true;
+                        material.alphaTest = 0.1;
+                    }
+                    
                     const mesh = new THREE.Mesh(geometry, material);
                     const p = c.position || {}; const r = c.rotation || {}; const s = c.scale || {};
                     mesh.position.set(p.x || 0, p.y || 0, p.z || 0);
@@ -3348,7 +3499,7 @@ function Game({ avatarUrl, gender }) {
                 });
                 buildPathfindingGrid?.();
             } catch (e) {
-                console.warn('Не удалось загрузить colliders.json', e);
+                console.warn('Не удалось загрузить кастомные коллайдеры', e);
             }
         }
 

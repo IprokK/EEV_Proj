@@ -1666,54 +1666,237 @@ app.get('/api/cities', authenticate, async (req, res) => {
   }
 });
 
-// API endpoint для сохранения коллайдеров города
-app.post('/api/colliders/city/:cityId', authenticate, async (req, res) => {
-  const cityId = req.params.cityId;
-  const collidersData = req.body;
+// API endpoint для получения коллайдеров города из базы данных
+app.get('/api/colliders/city/:cityId', authenticate, async (req, res) => {
+  const cityId = parseInt(req.params.cityId, 10);
   
   try {
-    // Сохраняем коллайдеры в JSON файл
-    const fileName = `colliders_city_${cityId}.json`;
-    const filePath = pathLib.join(__dirname, 'public', fileName);
+    const { rows } = await db.query(`
+      SELECT 
+        id,
+        type,
+        position_x as "position.x",
+        position_y as "position.y", 
+        position_z as "position.z",
+        rotation_x as "rotation.x",
+        rotation_y as "rotation.y",
+        rotation_z as "rotation.z",
+        scale_x as "scale.x",
+        scale_y as "scale.y",
+        scale_z as "scale.z",
+        color_r as "color.r",
+        color_g as "color.g",
+        color_b as "color.b",
+        opacity,
+        created_at,
+        updated_at
+      FROM colliders 
+      WHERE city_id = $1 
+      ORDER BY created_at ASC
+    `, [cityId]);
     
-    // Создаем директорию если не существует
-    await fs.promises.mkdir(pathLib.dirname(filePath), { recursive: true });
+    // Преобразуем данные в формат, ожидаемый фронтендом
+    const colliders = rows.map(row => ({
+      id: row.id,
+      type: row.type,
+      position: {
+        x: parseFloat(row["position.x"]),
+        y: parseFloat(row["position.y"]),
+        z: parseFloat(row["position.z"])
+      },
+      rotation: {
+        x: parseFloat(row["rotation.x"]),
+        y: parseFloat(row["rotation.y"]),
+        z: parseFloat(row["rotation.z"])
+      },
+      scale: {
+        x: parseFloat(row["scale.x"]),
+        y: parseFloat(row["scale.y"]),
+        z: parseFloat(row["scale.z"])
+      },
+      color: {
+        r: parseFloat(row["color.r"]),
+        g: parseFloat(row["color.g"]),
+        b: parseFloat(row["color.b"])
+      },
+      opacity: parseFloat(row.opacity),
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
     
-    // Записываем данные в файл
-    await fs.promises.writeFile(filePath, JSON.stringify(collidersData, null, 2), 'utf8');
-    
-    console.log(`Коллайдеры для города ${cityId} сохранены в ${fileName}`);
-    res.json({ success: true, message: 'Коллайдеры сохранены успешно' });
+    res.json({ colliders });
   } catch (error) {
-    console.error('Ошибка сохранения коллайдеров:', error);
+    console.error('Ошибка получения коллайдеров из БД:', error);
+    res.status(500).json({ error: 'Ошибка получения коллайдеров' });
+  }
+});
+
+// API endpoint для сохранения коллайдеров города в базу данных
+app.post('/api/colliders/city/:cityId', authenticate, async (req, res) => {
+  const cityId = parseInt(req.params.cityId, 10);
+  const { colliders } = req.body;
+  
+  if (!Array.isArray(colliders)) {
+    return res.status(400).json({ error: 'Invalid colliders data' });
+  }
+  
+  try {
+    // Начинаем транзакцию
+    await db.query('BEGIN');
+    
+    // Разделяем коллайдеры на новые и существующие
+    const newColliders = colliders.filter(c => !c.id);
+    const existingColliders = colliders.filter(c => c.id);
+    
+    console.log(`💾 Сохраняем: ${existingColliders.length} существующих, ${newColliders.length} новых коллайдеров`);
+    
+    // Обновляем существующие коллайдеры
+    for (const collider of existingColliders) {
+      await db.query(`
+        UPDATE colliders SET
+          type = $2,
+          position_x = $3, position_y = $4, position_z = $5,
+          rotation_x = $6, rotation_y = $7, rotation_z = $8,
+          scale_x = $9, scale_y = $10, scale_z = $11,
+          color_r = $12, color_g = $13, color_b = $14,
+          opacity = $15,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND city_id = $16
+      `, [
+        collider.id,
+        collider.type,
+        collider.position?.x || 0,
+        collider.position?.y || 0,
+        collider.position?.z || 0,
+        collider.rotation?.x || 0,
+        collider.rotation?.y || 0,
+        collider.rotation?.z || 0,
+        collider.scale?.x || 1,
+        collider.scale?.y || 1,
+        collider.scale?.z || 1,
+        collider.color?.r || 1,
+        collider.color?.g || 0,
+        collider.color?.b || 0,
+        collider.opacity || 0.3,
+        cityId
+      ]);
+    }
+    
+    // Вставляем новые коллайдеры
+    for (const collider of newColliders) {
+      await db.query(`
+        INSERT INTO colliders (
+          city_id, type,
+          position_x, position_y, position_z,
+          rotation_x, rotation_y, rotation_z,
+          scale_x, scale_y, scale_z,
+          color_r, color_g, color_b,
+          opacity
+        ) VALUES (
+          $1, $2,
+          $3, $4, $5,
+          $6, $7, $8,
+          $9, $10, $11,
+          $12, $13, $14,
+          $15
+        )
+      `, [
+        cityId,
+        collider.type,
+        collider.position?.x || 0,
+        collider.position?.y || 0,
+        collider.position?.z || 0,
+        collider.rotation?.x || 0,
+        collider.rotation?.y || 0,
+        collider.rotation?.z || 0,
+        collider.scale?.x || 1,
+        collider.scale?.y || 1,
+        collider.scale?.z || 1,
+        collider.color?.r || 1,
+        collider.color?.g || 0,
+        collider.color?.b || 0,
+        collider.opacity || 0.3
+      ]);
+    }
+    
+    // Подтверждаем транзакцию
+    await db.query('COMMIT');
+    
+    console.log(`✅ Коллайдеры для города ${cityId} сохранены в БД (${existingColliders.length} обновлено, ${newColliders.length} новых)`);
+    res.json({ success: true, message: 'Коллайдеры сохранены успешно', updated: existingColliders.length, created: newColliders.length });
+    
+  } catch (error) {
+    // Откатываем транзакцию в случае ошибки
+    await db.query('ROLLBACK');
+    console.error('Ошибка сохранения коллайдеров в БД:', error);
     res.status(500).json({ error: 'Ошибка сохранения коллайдеров' });
   }
 });
 
-// API endpoint для получения коллайдеров города
-app.get('/api/colliders/city/:cityId', authenticate, async (req, res) => {
-  const cityId = req.params.cityId;
+// API endpoint для обновления отдельного коллайдера
+app.put('/api/colliders/:colliderId', authenticate, async (req, res) => {
+  const colliderId = parseInt(req.params.colliderId, 10);
+  const collider = req.body;
   
   try {
-    const fileName = `colliders_city_${cityId}.json`;
-    const filePath = pathLib.join(__dirname, 'public', fileName);
+    const { rowCount } = await db.query(`
+      UPDATE colliders SET
+        type = $2,
+        position_x = $3, position_y = $4, position_z = $5,
+        rotation_x = $6, rotation_y = $7, rotation_z = $8,
+        scale_x = $9, scale_y = $10, scale_z = $11,
+        color_r = $12, color_g = $13, color_b = $14,
+        opacity = $15,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `, [
+      colliderId,
+      collider.type,
+      collider.position?.x || 0,
+      collider.position?.y || 0,
+      collider.position?.z || 0,
+      collider.rotation?.x || 0,
+      collider.rotation?.y || 0,
+      collider.rotation?.z || 0,
+      collider.scale?.x || 1,
+      collider.scale?.y || 1,
+      collider.scale?.z || 1,
+      collider.color?.r || 1,
+      collider.color?.g || 0,
+      collider.color?.b || 0,
+      collider.opacity || 0.3
+    ]);
     
-    // Проверяем существование файла
-    try {
-      await fs.promises.access(filePath);
-    } catch (error) {
-      // Файл не существует, возвращаем пустой массив
-      return res.json({ colliders: [] });
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Коллайдер не найден' });
     }
     
-    // Читаем файл
-    const fileContent = await fs.promises.readFile(filePath, 'utf8');
-    const data = JSON.parse(fileContent);
+    console.log(`✅ Коллайдер ${colliderId} обновлен в БД`);
+    res.json({ success: true, message: 'Коллайдер обновлен успешно' });
     
-    res.json(data);
   } catch (error) {
-    console.error('Ошибка чтения коллайдеров:', error);
-    res.status(500).json({ error: 'Ошибка чтения коллайдеров' });
+    console.error('Ошибка обновления коллайдера в БД:', error);
+    res.status(500).json({ error: 'Ошибка обновления коллайдера' });
+  }
+});
+
+// API endpoint для удаления отдельного коллайдера
+app.delete('/api/colliders/:colliderId', authenticate, async (req, res) => {
+  const colliderId = parseInt(req.params.colliderId, 10);
+  
+  try {
+    const { rowCount } = await db.query('DELETE FROM colliders WHERE id = $1', [colliderId]);
+    
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Коллайдер не найден' });
+    }
+    
+    console.log(`✅ Коллайдер ${colliderId} удален из БД`);
+    res.json({ success: true, message: 'Коллайдер удален успешно' });
+    
+  } catch (error) {
+    console.error('Ошибка удаления коллайдера из БД:', error);
+    res.status(500).json({ error: 'Ошибка удаления коллайдера' });
   }
 });
 
