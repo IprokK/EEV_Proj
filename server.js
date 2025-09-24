@@ -33,7 +33,7 @@ catch (e) {
     console.error('Ошибка при импорте db1 - virtual_World:', e);
     throw e;
 }
-/*
+
 try {
     new_quest_Base = require('./db2');
     console.log('db2 - new_quest_Base - успешно импортирован');
@@ -42,7 +42,7 @@ catch (e) {
     console.error('Ошибка при импорте db2 - new_quest_Base: ', e);
     throw e;
 }
-*/
+
 try {
   db = require('./db');
   console.log('db успешно импортирован');
@@ -1379,6 +1379,482 @@ function generateTransactions() {
 
     return transactions;
 }
+
+
+
+// Начало кода для квестов
+
+// Маршрут для получения информации о квестах игрока
+app.get('/api/quests/player-status', authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        console.log(`[QUESTS] Запрос статуса квестов для пользователя ${userId}`);
+
+        // Получаем уровень игрока (по умолчанию 1)
+        const playerLevel = 1; // Пока используем фиксированный уровень
+
+        // Получаем все активные квесты с их статусами для игрока
+        const questsData = await getPlayerQuestsData(userId, playerLevel);
+
+        console.log(`[QUESTS] Возвращаем данные для пользователя ${userId}: ${questsData.length} квестов`);
+        res.json({
+            success: true,
+            playerLevel: playerLevel,
+            quests: questsData
+        });
+
+    } catch (error) {
+        console.error('Ошибка получения статуса квестов игрока:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Ошибка получения данных о квестах'
+        });
+    }
+});
+
+// Вспомогательная функция для получения уровня игрока
+async function getPlayerLevel(userId) {
+    try {
+        // Пока используем уровень по умолчанию 1
+        // В будущем можно добавить логику расчета уровня на основе опыта
+        return 1;
+    } catch (error) {
+        console.error('Ошибка получения уровня игрока:', error);
+        return 1;
+    }
+}
+
+// Основная функция для получения данных о квестах
+async function getPlayerQuestsData(userId, playerLevel) {
+    try {
+        // Получаем все доступные квесты
+        const availableQuests = await new_quest_Base.query(`
+            SELECT q.id, q.title, q.description, q.kind, q.is_active, q.metadata,
+                   pq.status as player_status, pq.current_step_id,
+                   pq.started_at, pq.completed_at
+            FROM quests q
+            LEFT JOIN player_quests pq ON q.id = pq.quest_id AND pq.player_id = $1
+            WHERE q.is_active = true
+            ORDER BY q.id
+        `, [userId]);
+
+        const questsData = [];
+
+        for (const quest of availableQuests.rows) {
+            // Проверяем условия доступа к квесту
+            const hasAccess = await checkQuestAccess(quest.id, playerLevel, userId);
+
+            // Получаем информацию о текущем шаге
+            const currentStepInfo = await getCurrentStepInfo(quest.id, quest.current_step_id, userId);
+
+            // Получаем все шаги квеста
+            const questSteps = await new_quest_Base.query(`
+                SELECT qs.id, qs.step_index, qs.title, qs.description, 
+                       qs.action_type, qs.action_payload, qs.dialogue_scene,
+                       qs.is_optional, ps.status as player_step_status,
+                       ps.started_at as step_started, ps.completed_at as step_completed
+                FROM quest_steps qs
+                LEFT JOIN player_steps ps ON qs.id = ps.quest_step_id AND ps.player_id = $1
+                WHERE qs.quest_id = $2
+                ORDER BY qs.step_index
+            `, [userId, quest.id]);
+
+            // Определяем статус квеста для игрока
+            let questStatus = 'available'; // доступен
+            if (quest.player_status === 'completed') {
+                questStatus = 'completed';
+            } else if (quest.player_status === 'in_progress') {
+                questStatus = 'in_progress';
+            } else if (!hasAccess) {
+                questStatus = 'locked';
+            }
+
+            questsData.push({
+                id: quest.id,
+                title: quest.title,
+                description: quest.description,
+                kind: quest.kind,
+                status: questStatus,
+                hasAccess: hasAccess,
+                currentStep: currentStepInfo,
+                steps: questSteps.rows.map(step => ({
+                    id: step.id,
+                    stepIndex: step.step_index,
+                    title: step.title,
+                    description: step.description,
+                    actionType: step.action_type,
+                    actionPayload: step.action_payload,
+                    dialogueScene: step.dialogue_scene,
+                    isOptional: step.is_optional,
+                    playerStatus: step.player_step_status || 'not_started',
+                    startedAt: step.step_started,
+                    completedAt: step.step_completed
+                })),
+                metadata: quest.metadata,
+                startedAt: quest.started_at,
+                completedAt: quest.completed_at
+            });
+        }
+
+        return questsData;
+
+    } catch (error) {
+        console.error('Ошибка получения данных квестов:', error);
+        throw error;
+    }
+}
+
+// Функция проверки доступа к квесту
+async function checkQuestAccess(questId, playerLevel, userId) {
+    try {
+        console.log('Сосал');
+        // Проверяем группы условий
+        const prerequisiteGroups = await new_quest_Base.query(`
+            SELECT qpg.id, qpg.group_index
+            FROM quest_prereq_groups qpg
+            WHERE qpg.quest_id = $1
+            ORDER BY qpg.group_index
+        `, [questId]);
+
+        // Если нет групп условий - квест доступен
+        if (prerequisiteGroups.rows.length === 0) {
+            return true;
+        }
+
+        // Проверяем каждую группу условий
+        for (const group of prerequisiteGroups.rows) {
+            const groupConditions = await new_quest_Base.query(`
+                SELECT qpc.condition_type, qpc.condition_payload
+                FROM quest_prereq_conditions qpc
+                WHERE qpc.group_id = $1
+            `, [group.id]);
+
+            let allConditionsMet = true;
+
+            for (const condition of groupConditions.rows) {
+                const conditionMet = await checkCondition(
+                    condition.condition_type,
+                    condition.condition_payload,
+                    playerLevel,
+                    userId
+                );
+
+                if (!conditionMet) {
+                    allConditionsMet = false;
+                    break;
+                }
+            }
+
+            // Если хотя бы одна группа условий выполнена - квест доступен
+            if (allConditionsMet) {
+                return true;
+            }
+        }
+
+        return false;
+
+    } catch (error) {
+        console.error('Ошибка проверки доступа к квесту:', error);
+        return false;
+    }
+}
+
+// Функция проверки конкретного условия
+async function checkCondition(conditionType, conditionPayload, playerLevel, userId) {
+    try {
+        const payload = typeof conditionPayload === 'string'
+            ? JSON.parse(conditionPayload)
+            : conditionPayload;
+
+        switch (conditionType) {
+            case 'level_ge':
+                return playerLevel >= payload.level;
+
+            case 'quest_completed':
+                // Проверяем завершенность другого квеста
+                const questCheck = await new_quest_Base.query(`
+                    SELECT 1 FROM player_quests 
+                    WHERE player_id = $1 AND quest_id = $2 AND status = 'completed'
+                `, [userId, payload.quest_id]);
+                return questCheck.rows.length > 0;
+
+            case 'step_completed':
+                // Проверяем завершенность шага
+                const stepCheck = await new_quest_Base.query(`
+                    SELECT 1 FROM player_steps 
+                    WHERE player_id = $1 AND quest_step_id = $2 AND status = 'completed'
+                `, [userId, payload.step_id]);
+                return stepCheck.rows.length > 0;
+
+            default:
+                console.warn(`Неизвестный тип условия: ${conditionType}`);
+                return false;
+        }
+    } catch (error) {
+        console.error('Ошибка проверки условия:', error);
+        return false;
+    }
+}
+
+// Функция получения информации о текущем шаге
+async function getCurrentStepInfo(questId, currentStepId, userId) {
+    if (!currentStepId) {
+        // Если текущего шага нет, возвращаем первый шаг квеста
+        const firstStep = await new_quest_Base.query(`
+            SELECT id, step_index, title, description 
+            FROM quest_steps 
+            WHERE quest_id = $1 
+            ORDER BY step_index ASC 
+            LIMIT 1
+        `, [questId]);
+
+        return firstStep.rows.length > 0 ? {
+            id: firstStep.rows[0].id,
+            stepIndex: firstStep.rows[0].step_index,
+            title: firstStep.rows[0].title,
+            description: firstStep.rows[0].description
+        } : null;
+    }
+
+    // Получаем информацию о текущем шаге
+    const currentStep = await new_quest_Base.query(`
+        SELECT qs.id, qs.step_index, qs.title, qs.description,
+               ps.status as player_status
+        FROM quest_steps qs
+        LEFT JOIN player_steps ps ON qs.id = ps.quest_step_id AND ps.player_id = $1
+        WHERE qs.id = $2
+    `, [userId, currentStepId]);
+
+    return currentStep.rows.length > 0 ? {
+        id: currentStep.rows[0].id,
+        stepIndex: currentStep.rows[0].step_index,
+        title: currentStep.rows[0].title,
+        description: currentStep.rows[0].description,
+        playerStatus: currentStep.rows[0].player_status
+    } : null;
+}
+
+// Маршрут для старта квеста
+app.post('/api/quests/:questId/start', authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const questId = parseInt(req.params.questId);
+        const playerLevel = await getPlayerLevel(userId);
+
+        // Проверяем доступность квеста
+        const hasAccess = await checkQuestAccess(questId, playerLevel, userId);
+        if (!hasAccess) {
+            return res.status(403).json({
+                success: false,
+                error: 'Квест недоступен'
+            });
+        }
+
+        // Проверяем, не начат ли уже квест
+        const existingQuest = await new_quest_Base.query(`
+            SELECT id FROM player_quests 
+            WHERE player_id = $1 AND quest_id = $2
+        `, [userId, questId]);
+
+        if (existingQuest.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Квест уже начат'
+            });
+        }
+
+        // Получаем первый шаг квеста
+        const firstStep = await new_quest_Base.query(`
+            SELECT id FROM quest_steps 
+            WHERE quest_id = $1 
+            ORDER BY step_index ASC 
+            LIMIT 1
+        `, [questId]);
+
+        if (firstStep.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Квест не имеет шагов'
+            });
+        }
+
+        // Начинаем квест
+        await new_quest_Base.query(`
+            INSERT INTO player_quests 
+            (player_id, quest_id, current_step_id, status, started_at, last_updated_at)
+            VALUES ($1, $2, $3, 'in_progress', NOW(), NOW())
+        `, [userId, questId, firstStep.rows[0].id]);
+
+        // Записываем первый шаг
+        await new_quest_Base.query(`
+            INSERT INTO player_steps 
+            (player_id, quest_step_id, status, started_at)
+            VALUES ($1, $2, 'in_progress', NOW())
+        `, [userId, firstStep.rows[0].id]);
+
+        res.json({
+            success: true,
+            message: 'Квест начат',
+            currentStepId: firstStep.rows[0].id
+        });
+
+    } catch (error) {
+        console.error('Ошибка старта квеста:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Ошибка начала квеста'
+        });
+    }
+});
+
+
+
+// Маршрут для отметки прослушанного диалога
+app.post('/api/quests/mark-dialog-listened', authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { npc_id, dialogue_key } = req.body;
+
+        console.log(`[QUESTS] Отметка прослушанного диалога: user=${userId}, npc=${npc_id}, dialogue=${dialogue_key}`);
+
+        if (!npc_id || !dialogue_key) {
+            return res.status(400).json({
+                success: false,
+                error: 'Не указаны npc_id или dialogue_key'
+            });
+        }
+
+        // 1. Записываем взаимодействие в player_npc_interactions
+        const interactionResult = await new_quest_Base.query(`
+            INSERT INTO player_npc_interactions 
+            (player_id, npc_id, action_type, action_payload, created_at)
+            VALUES ($1, $2, 'listen_npc', $3, NOW())
+            RETURNING id
+        `, [userId, npc_id, JSON.stringify({ dialogue_key: dialogue_key })]);
+
+        console.log(`[QUESTS] Взаимодействие записано с ID: ${interactionResult.rows[0].id}`);
+
+        // 2. Проверяем, относится ли это взаимодействие к активному шагу квеста
+        const activeQuestStep = await new_quest_Base.query(`
+            SELECT pq.id as player_quest_id, pq.current_step_id, qs.id as step_id, qs.action_payload
+            FROM player_quests pq
+            JOIN quest_steps qs ON pq.current_step_id = qs.id
+            WHERE pq.player_id = $1 AND pq.status = 'in_progress'
+            AND qs.action_type = 'talk_npc'
+        `, [userId]);
+
+        if (activeQuestStep.rows.length > 0) {
+            const step = activeQuestStep.rows[0];
+            const actionPayload = typeof step.action_payload === 'string'
+                ? JSON.parse(step.action_payload)
+                : step.action_payload;
+
+            // Проверяем, соответствует ли NPC текущему шагу квеста
+            if (actionPayload.npc_id == npc_id) {
+                console.log(`[QUESTS] Диалог соответствует активному шагу квеста: step_id=${step.step_id}`);
+
+                // 3. Проверяем требования для завершения шага
+                const stepRequirements = await new_quest_Base.query(`
+                    SELECT requirement_type, requirement_payload 
+                    FROM step_requirements 
+                    WHERE quest_step_id = $1
+                    ORDER BY ord
+                `, [step.step_id]);
+
+                let stepCompleted = true;
+
+                for (const requirement of stepRequirements.rows) {
+                    const payload = typeof requirement.requirement_payload === 'string'
+                        ? JSON.parse(requirement.requirement_payload)
+                        : requirement.requirement_payload;
+
+                    if (requirement.requirement_type === 'listen_npc') {
+                        // Проверяем, прослушал ли игрок нужное количество диалогов с указанными NPC
+                        const listenCount = await new_quest_Base.query(`
+                            SELECT COUNT(*) as count
+                            FROM player_npc_interactions
+                            WHERE player_id = $1 
+                            AND npc_id = ANY($2::int[])
+                            AND action_type = 'listen_npc'
+                        `, [userId, payload.npc_ids]);
+
+                        if (listenCount.rows[0].count < payload.count) {
+                            stepCompleted = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (stepCompleted) {
+                    // 4. Отмечаем шаг как завершенный
+                    await new_quest_Base.query(`
+                        UPDATE player_steps 
+                        SET status = 'completed', completed_at = NOW()
+                        WHERE player_id = $1 AND quest_step_id = $2
+                    `, [userId, step.step_id]);
+
+                    // 5. Находим следующий шаг
+                    const nextStep = await new_quest_Base.query(`
+                        SELECT qs.id, qs.step_index
+                        FROM quest_steps qs
+                        WHERE qs.quest_id = (
+                            SELECT quest_id FROM quest_steps WHERE id = $1
+                        )
+                        AND qs.step_index > (
+                            SELECT step_index FROM quest_steps WHERE id = $1
+                        )
+                        ORDER BY qs.step_index ASC
+                        LIMIT 1
+                    `, [step.step_id]);
+
+                    if (nextStep.rows.length > 0) {
+                        // 6. Обновляем текущий шаг в квесте
+                        await new_quest_Base.query(`
+                            UPDATE player_quests 
+                            SET current_step_id = $1, last_updated_at = NOW()
+                            WHERE player_id = $2 AND id = $3
+                        `, [nextStep.rows[0].id, userId, step.player_quest_id]);
+
+                        // 7. Начинаем следующий шаг
+                        await new_quest_Base.query(`
+                            INSERT INTO player_steps 
+                            (player_id, quest_step_id, status, started_at)
+                            VALUES ($1, $2, 'in_progress', NOW())
+                            ON CONFLICT (player_id, quest_step_id) 
+                            DO UPDATE SET status = 'in_progress', started_at = NOW()
+                        `, [userId, nextStep.rows[0].id]);
+
+                        console.log(`[QUESTS] Шаг завершен, переход к шагу ${nextStep.rows[0].step_index}`);
+                    } else {
+                        // 8. Если это последний шаг - завершаем квест
+                        await new_quest_Base.query(`
+                            UPDATE player_quests 
+                            SET status = 'completed', completed_at = NOW(), last_updated_at = NOW()
+                            WHERE player_id = $1 AND id = $2
+                        `, [userId, step.player_quest_id]);
+
+                        console.log(`[QUESTS] Квест завершен!`);
+                    }
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: 'Диалог отмечен как прослушанный'
+        });
+
+    } catch (error) {
+        console.error('Ошибка при отметке прослушанного диалога:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Ошибка сервера при обработке диалога'
+        });
+    }
+});
+
+
+
 //Конец копи
 //Начало копи
 app.get('/api/quests/progress', authenticate, async (req, res) => {

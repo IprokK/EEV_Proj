@@ -8,32 +8,29 @@ export const useDialogManager = () => {
     const [currentForm, setCurrentForm] = useState(null);
 
     // ������� ��� �������� ������ � ������������ ������� �� ������
-    const markDialogAsListened = async (jsonFilename) => {
+    const markDialogAsListened = async (npcId, dialogueKey) => {
         try {
-            // ��������� ������ ��� ����� ��� ����
-            const filename = jsonFilename.split('/').pop().split('\\').pop();
-            console.log('Normalized filename:', filename);
-            console.log("����� � �� ���111�");
             const token = localStorage.getItem('token');
-            const response = await fetch('/api/listen', {
+            const response = await fetch('/api/quests/mark-dialog-listened', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    // player_id больше не обязателен: сервер возьмёт его из токена/сессии при наличии
-                    json_filename: filename
+                    npc_id: npcId,
+                    dialogue_key: dialogueKey
                 })
             });
-            console.log("����� � �� ����3455654");
 
             if (!response.ok) {
-                const txt = await response.text().catch(()=> '');
-                console.error('Ошибка при записи прослушанного:', response.status, txt);
+                const txt = await response.text().catch(() => '');
+                console.error('Ошибка при записи прослушанного диалога:', response.status, txt);
+            } else {
+                console.log('Диалог успешно отмечен как прослушанный');
             }
         } catch (error) {
-            console.error('Ошибка сети при записи прослушанного:', error);
+            console.error('Ошибка сети при записи прослушанного диалога:', error);
         }
     };
 
@@ -44,21 +41,32 @@ export const useDialogManager = () => {
             setCurrentDialog(data);
             setDialogIndex(0);
             setShowDialog(true);
+
+            // Получаем dialogue_key из JSON или используем npcId как fallback
+            const dialogueKey = data.dialogue_key || npcId;
+
+            // Записываем начало прослушивания диалога
+            await markDialogAsListened(npcId, dialogueKey);
         } catch (error) {
-            console.error('������ �������� �������:', error);
+            console.error('Ошибка загрузки диалога:', error);
         }
     };
 
     const handleAnswerSelect = async (answer) => {
-        console.log('[Debug] Answer object:', answer); // <- ��� ����� ���������?
-        console.log('[Debug] "end" in answer:', 'end' in answer); // <- ���� �� ���� end?
+        console.log('[Debug] Answer object:', answer);
+
         if (answer.end !== undefined) {
             console.log('[Debug] Dialog end triggered!');
-            // ��� ���������� ������� �������� ��� ��� ������������
-            if (currentDialog?.filename) {
-                await markDialogAsListened(currentDialog.filename);
-                console.log("����� � �� ����");
+
+            // При завершении диалога записываем финальное взаимодействие
+            if (currentDialog) {
+                const npcId = currentDialog.npc_id;
+                const dialogueKey = currentDialog.dialogue_key || currentDialog.filename?.replace('.json', '');
+                if (npcId && dialogueKey) {
+                    await markDialogAsListened(npcId, dialogueKey);
+                }
             }
+
             setShowDialog(false);
         } else if (answer.next !== undefined) {
             if (typeof answer.next === 'string' && answer.next.startsWith('form_')) {

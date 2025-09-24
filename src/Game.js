@@ -16,9 +16,10 @@ import OrgControlPanel from './components/OrgControlPanel';
 import DoubleTapWrapper from './pages/DoubleTapWrapper';
 import WaveformPlayer from './pages/WaveformPlayer';
 import { getUsersStatus, loadUserInfo } from './api/auth.js';
+import QuestSystem from './pages/QuestSystem ';
 
 function Game({ avatarUrl, gender }) {
-
+    const [showQuests, setShowQuests] = useState(false);
     // 1) реф для хранилища сцены
     const sceneRef = useRef(new THREE.Scene());
 
@@ -219,9 +220,9 @@ function Game({ avatarUrl, gender }) {
             setTgLoading(true);
             loadTelegramContacts().finally(() => setTgLoading(false));
         }
-        if (appName === "Chrome") {
-            loadQuestsProgress();
-        }
+        //if (appName === "Chrome") {
+        //    loadQuestsProgress();
+        //}
         if (appName === "Settings") {
             setShowMiniGame(true);
         }
@@ -6055,7 +6056,25 @@ function Game({ avatarUrl, gender }) {
                     </div>
                 ))}
             </div>
-
+            <button
+                style={{
+                    position: 'absolute',
+                    top: 20,
+                    right: 250, // Измените позицию по необходимости
+                    zIndex: 1000,
+                    padding: '10px 18px',
+                    background: '#8B4513',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                }}
+                onClick={() => setShowQuests(true)}
+            >
+                Квесты
+            </button>
             <div style={{ position: 'absolute', top: 80, left: 20, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>
                 Баланс: {balance}
             </div>
@@ -6235,7 +6254,9 @@ function Game({ avatarUrl, gender }) {
                     </div>
                 </div>
             )}
-
+            {showQuests && (
+                <QuestSystem onClose={() => setShowQuests(false)} />
+            )}
             {selectedHouse && (
                 <div style={{
                     position: 'absolute',
