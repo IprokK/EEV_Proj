@@ -49,34 +49,53 @@ export default function Login({ onLogin }) {
   };
 
   return (
-    <div style={styles.wrapper}>
-      <h2>Вход</h2>
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <label>
-          Почта:
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Пароль:
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        {error && <p style={styles.error}>{error}</p>}
-        <button type="submit" style={styles.button}>Войти</button>
-      </form>
-      <p>
-        Нет аккаунта? <a href="/register/step1">Зарегистрироваться</a>
-      </p>
-    </div>
+      <div style={styles.wrapper}>
+          <h2>Вход</h2>
+          <form onSubmit={handleSubmit} style={styles.form}>
+              <label>
+                  Почта: 
+                  <input
+                      type="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      required
+                      style={{
+                          margin: '13px',
+                          borderColor: email.trim() !== '' ? 'limegreen' : 'gray',
+                          borderWidth: '2px',
+                          borderStyle: 'solid',
+                          padding: '5px',
+                          borderRadius: '5px',
+                          transition: 'border-color 0.3s ease',
+                      }}
+                  />
+              </label>
+              <label>
+                  Пароль:
+                  <input
+                      type="password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      required
+                      style={{
+                          margin: '5px',
+                          borderColor: password.trim() !== '' ? 'limegreen' : 'gray',
+                          borderWidth: '2px',
+                          borderStyle: 'solid',
+                          padding: '5px',
+                          borderRadius: '5px',
+                          transition: 'border-color 0.3s ease',
+                      }}
+                  />
+              </label>
+              {error && <p style={styles.error}>{error}</p>}
+              <button type="submit" style={styles.button}>Войти</button>
+          </form>
+          <p>
+              Нет аккаунта? <a href="/register/step1">Зарегистрироваться</a>
+          </p>
+      </div>
+
   );
 }
 
